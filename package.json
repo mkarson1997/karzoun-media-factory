@@ -6,14 +6,19 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "worker": "tsx src/worker.ts",
-    "import:prompts": "tsx scripts/import-prompts.ts"
+    "import:prompts": "tsx scripts/import-prompts.ts",
+    "seed": "tsx prisma/seed.ts",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^6.14.0",
+    "csv-parse": "^6.1.0",
     "next": "^15.5.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
@@ -24,9 +29,14 @@
     "@types/node": "^24.3.0",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
+    "eslint": "^9.34.0",
+    "eslint-config-next": "^15.5.0",
     "prisma": "^6.14.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   }
 }
