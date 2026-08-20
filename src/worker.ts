@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from './lib/prisma';
-import { attachGeneratedMedia, transitionJob } from './lib/control-plane';
+import { attachGeneratedMedia, claimJobTransition, transitionJob } from './lib/control-plane';
 import { getCreativeDirector, type CreativePlan } from './lib/creative-director';
 import { getPublishingProvider, getVideoGenerationProvider } from './lib/providers';
 import { createTelegramBot, notifyOperator } from './lib/telegram';
@@ -39,16 +39,6 @@ async function prepareCreativePlan(job: { id: string; requestedDuration: number;
   return result.plan;
 }
 
-async function finishReadyForReview(job: { id: string; prompt: { externalPromptId: string } }, result: { providerJobId: string; videoUrl?: string; thumbnailUrl?: string }) {
-  await attachGeneratedMedia(job.id, {
-    providerJobId: result.providerJobId,
-    videoUrl: result.videoUrl,
-    thumbnailUrl: result.thumbnailUrl
-  });
-  await transitionJob(job.id, 'READY_FOR_REVIEW', { actor: 'worker' });
-  await notifyOperator(`🎬 ${job.prompt.externalPromptId} is ready for review.\nUse /review in Telegram or open the dashboard.`).catch(() => undefined);
-}
-
 async function pollOneMockGeneration() {
   const generating = await prisma.productionJob.findFirst({
     where: { status: 'GENERATING', provider: { in: ['mock', 'mock-demo'] }, providerJobId: { not: null } },
@@ -60,15 +50,27 @@ async function pollOneMockGeneration() {
   try {
     const provider = await getVideoGenerationProvider(generating.provider);
     const result = await provider.getJobStatus(generating.providerJobId);
-    if (result.status === 'READY_FOR_REVIEW') await finishReadyForReview(generating, { ...result, providerJobId: generating.providerJobId });
+    if (result.status === 'READY_FOR_REVIEW') {
+      await attachGeneratedMedia(generating.id, {
+        providerJobId: generating.providerJobId,
+        videoUrl: result.videoUrl,
+        thumbnailUrl: result.thumbnailUrl
+      });
+      const claimed = await claimJobTransition(generating.id, 'GENERATING', 'READY_FOR_REVIEW', 'worker');
+      if (claimed) {
+        await notifyOperator(`🎬 ${generating.prompt.externalPromptId} is ready for review.\nUse /review in Telegram or open the dashboard.`).catch(() => undefined);
+      }
+    }
     return true;
   } catch (error) {
-    await transitionJob(generating.id, 'FAILED', { actor: 'worker' }).catch(() => undefined);
-    await prisma.productionJob.update({
-      where: { id: generating.id },
-      data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Generation polling failed' }
-    }).catch(() => undefined);
-    await notifyOperator(`⚠️ Generation failed for ${generating.prompt.externalPromptId}.`).catch(() => undefined);
+    const failed = await claimJobTransition(generating.id, 'GENERATING', 'FAILED', 'worker').catch(() => false);
+    if (failed) {
+      await prisma.productionJob.update({
+        where: { id: generating.id },
+        data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Generation polling failed' }
+      }).catch(() => undefined);
+      await notifyOperator(`⚠️ Generation failed for ${generating.prompt.externalPromptId}.`).catch(() => undefined);
+    }
     return true;
   }
 }
@@ -81,8 +83,10 @@ async function startOneGeneration() {
   });
   if (!queued) return false;
 
+  const claimed = await claimJobTransition(queued.id, 'QUEUED', 'GENERATING', 'worker');
+  if (!claimed) return true;
+
   try {
-    await transitionJob(queued.id, 'GENERATING', { actor: 'worker' });
     const creativePlan = await prepareCreativePlan(queued);
     const provider = await getVideoGenerationProvider(queued.provider);
     const result = await provider.generateVideo({
@@ -98,17 +102,21 @@ async function startOneGeneration() {
     });
 
     if (result.status === 'READY_FOR_REVIEW') {
-      await transitionJob(queued.id, 'READY_FOR_REVIEW', { actor: 'worker' });
-      await notifyOperator(`🎬 ${queued.prompt.externalPromptId} is ready for review.\nUse /review in Telegram or open the dashboard.`).catch(() => undefined);
+      const ready = await claimJobTransition(queued.id, 'GENERATING', 'READY_FOR_REVIEW', 'worker');
+      if (ready) {
+        await notifyOperator(`🎬 ${queued.prompt.externalPromptId} is ready for review.\nUse /review in Telegram or open the dashboard.`).catch(() => undefined);
+      }
     }
     return true;
   } catch (error) {
-    await transitionJob(queued.id, 'FAILED', { actor: 'worker' }).catch(() => undefined);
-    await prisma.productionJob.update({
-      where: { id: queued.id },
-      data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Creative planning or generation failed' }
-    }).catch(() => undefined);
-    await notifyOperator(`⚠️ Creative planning/generation failed for ${queued.prompt.externalPromptId}.`).catch(() => undefined);
+    const failed = await claimJobTransition(queued.id, 'GENERATING', 'FAILED', 'worker').catch(() => false);
+    if (failed) {
+      await prisma.productionJob.update({
+        where: { id: queued.id },
+        data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Creative planning or generation failed' }
+      }).catch(() => undefined);
+      await notifyOperator(`⚠️ Creative planning/generation failed for ${queued.prompt.externalPromptId}.`).catch(() => undefined);
+    }
     return true;
   }
 }
@@ -144,9 +152,11 @@ async function processOnePublishJob() {
   });
   if (!due?.schedule) return;
 
+  const claimed = await claimJobTransition(due.id, 'SCHEDULED', 'PUBLISHING', 'worker');
+  if (!claimed) return;
+
   const publishingName = process.env.PUBLISHING_PROVIDER || 'mock';
   try {
-    await transitionJob(due.id, 'PUBLISHING', { actor: 'worker' });
     await prisma.publishSchedule.update({ where: { jobId: due.id }, data: { status: 'PROCESSING' } });
     if (publishingName === 'youtube' && !due.videoUrl) throw new Error('Real YouTube publishing requires a generated video URL');
 
@@ -179,14 +189,16 @@ async function processOnePublishJob() {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 500) : 'Publishing failed';
-    await transitionJob(due.id, 'FAILED', { actor: 'worker' }).catch(() => undefined);
-    await prisma.publishSchedule.update({ where: { jobId: due.id }, data: { status: 'FAILED' } }).catch(() => undefined);
-    await prisma.publishRecord.upsert({
-      where: { jobId: due.id },
-      create: { jobId: due.id, visibility: 'PRIVATE', status: 'FAILED', error: message },
-      update: { status: 'FAILED', error: message }
-    }).catch(() => undefined);
-    await notifyOperator(`⚠️ Publishing failed for ${due.prompt.externalPromptId} on ${due.channel.name}.`).catch(() => undefined);
+    const failed = await claimJobTransition(due.id, 'PUBLISHING', 'FAILED', 'worker').catch(() => false);
+    if (failed) {
+      await prisma.publishSchedule.update({ where: { jobId: due.id }, data: { status: 'FAILED' } }).catch(() => undefined);
+      await prisma.publishRecord.upsert({
+        where: { jobId: due.id },
+        create: { jobId: due.id, visibility: 'PRIVATE', status: 'FAILED', error: message },
+        update: { status: 'FAILED', error: message }
+      }).catch(() => undefined);
+      await notifyOperator(`⚠️ Publishing failed for ${due.prompt.externalPromptId} on ${due.channel.name}.`).catch(() => undefined);
+    }
   }
 }
 
