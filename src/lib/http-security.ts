@@ -17,7 +17,10 @@ export function safeError(error: unknown) {
       'Production job not found',
       'No enabled',
       'Invalid production job transition',
-      'Cross-origin mutation rejected'
+      'Cross-origin mutation rejected',
+      'Daily production limit reached',
+      'Daily publishing limit reached',
+      'Regeneration is only available'
     ].find((prefix) => error.message.startsWith(prefix));
     if (safe) return error.message;
   }
