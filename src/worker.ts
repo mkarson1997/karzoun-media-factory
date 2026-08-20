@@ -5,7 +5,6 @@ import { getCreativeDirector, type CreativePlan } from './lib/creative-director'
 import { getPublishingProvider, getVideoGenerationProvider } from './lib/providers';
 import { createTelegramBot, notifyOperator } from './lib/telegram';
 import { syncPublishedAnalytics } from './lib/youtube-analytics';
-import { getYouTubeConnectionStatus } from './lib/youtube-auth';
 
 let stopping = false;
 let lastAnalyticsSyncAt = 0;
@@ -124,7 +123,7 @@ async function notifyUpcomingSchedule() {
   const soon = new Date(now.getTime() + 15 * 60 * 1000);
   const jobs = await prisma.productionJob.findMany({
     where: { status: 'SCHEDULED', schedule: { publishAt: { gt: now, lte: soon }, status: 'PENDING' } },
-    include: { prompt: true, schedule: true },
+    include: { prompt: true, schedule: true, channel: true },
     take: 5
   });
 
@@ -132,7 +131,7 @@ async function notifyUpcomingSchedule() {
     if (!job.schedule) continue;
     const sent = await prisma.activityLog.findFirst({ where: { action: 'SCHEDULE_REMINDER_SENT', entityType: 'ProductionJob', entityId: job.id } });
     if (sent) continue;
-    await notifyOperator(`⏰ ${job.prompt.externalPromptId} is scheduled in less than 15 minutes.\nVisibility: ${job.schedule.visibility}`).catch(() => undefined);
+    await notifyOperator(`⏰ ${job.prompt.externalPromptId} is scheduled in less than 15 minutes.\nChannel: ${job.channel.name}\nVisibility: ${job.schedule.visibility}`).catch(() => undefined);
     await prisma.activityLog.create({ data: { actor: 'worker', action: 'SCHEDULE_REMINDER_SENT', entityType: 'ProductionJob', entityId: job.id } });
   }
 }
@@ -140,7 +139,7 @@ async function notifyUpcomingSchedule() {
 async function processOnePublishJob() {
   const due = await prisma.productionJob.findFirst({
     where: { status: 'SCHEDULED', schedule: { publishAt: { lte: new Date() }, status: 'PENDING' } },
-    include: { prompt: true, schedule: true },
+    include: { prompt: true, schedule: true, channel: true },
     orderBy: { schedule: { publishAt: 'asc' } }
   });
   if (!due?.schedule) return;
@@ -154,6 +153,7 @@ async function processOnePublishJob() {
     const publishingProvider = await getPublishingProvider(publishingName);
     const result = await publishingProvider.uploadVideo({
       jobId: due.id,
+      factoryChannelId: due.channelId,
       videoUrl: due.videoUrl || 'mock://generated-video',
       title: due.title || due.prompt.concept.slice(0, 55),
       description: [due.description || '', due.hashtags.join(' ')].filter(Boolean).join('\n\n'),
@@ -173,7 +173,7 @@ async function processOnePublishJob() {
     await transitionJob(due.id, 'PUBLISHED', { actor: 'worker' });
 
     if (publishingName === 'youtube') {
-      await notifyOperator(`✅ ${due.prompt.externalPromptId} uploaded to YouTube as ${actualVisibility}.\nVideo ID: ${result.externalVideoId ?? 'unknown'}`).catch(() => undefined);
+      await notifyOperator(`✅ ${due.prompt.externalPromptId} uploaded to ${due.channel.name} as ${actualVisibility}.\nVideo ID: ${result.externalVideoId ?? 'unknown'}`).catch(() => undefined);
     } else {
       await notifyOperator(`✅ ${due.prompt.externalPromptId} completed the MOCK publishing flow. No real YouTube upload occurred.`).catch(() => undefined);
     }
@@ -186,7 +186,7 @@ async function processOnePublishJob() {
       create: { jobId: due.id, visibility: 'PRIVATE', status: 'FAILED', error: message },
       update: { status: 'FAILED', error: message }
     }).catch(() => undefined);
-    await notifyOperator(`⚠️ Publishing failed for ${due.prompt.externalPromptId}.`).catch(() => undefined);
+    await notifyOperator(`⚠️ Publishing failed for ${due.prompt.externalPromptId} on ${due.channel.name}.`).catch(() => undefined);
   }
 }
 
@@ -198,9 +198,6 @@ async function maybeSyncAnalytics() {
   if (Date.now() - lastAnalyticsSyncAt < intervalMs) return;
   lastAnalyticsSyncAt = Date.now();
 
-  const connection = await getYouTubeConnectionStatus().catch(() => ({ configured: false, connected: false }));
-  if (!connection.connected) return;
-
   const summary = await syncPublishedAnalytics({ limit: 50, minAgeMinutes: intervalMinutes }).catch((error) => ({
     eligible: 0,
     synced: 0,
@@ -209,9 +206,7 @@ async function maybeSyncAnalytics() {
     failures: [{ jobId: 'batch', reason: error instanceof Error ? error.message : 'Analytics sync failed' }]
   }));
 
-  if (summary.failed > 0) {
-    console.warn(`Analytics sync completed with ${summary.failed} failure(s).`);
-  }
+  if (summary.failed > 0) console.warn(`Analytics sync completed with ${summary.failed} failure(s).`);
 }
 
 async function processCycle() {
