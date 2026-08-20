@@ -1,0 +1,162 @@
+import { JobStatus as PrismaJobStatus, ReviewDecisionType, ReviewSource, Visibility } from '@prisma/client';
+import { prisma } from './prisma';
+import { assertTransition, type JobStatus } from './job-state-machine';
+
+export async function getFactoryCounters() {
+  const [promptCount, grouped] = await Promise.all([
+    prisma.prompt.count({ where: { active: true } }),
+    prisma.productionJob.groupBy({ by: ['status'], _count: { _all: true } })
+  ]);
+
+  const counts = Object.fromEntries(grouped.map((row) => [row.status, row._count._all])) as Partial<Record<PrismaJobStatus, number>>;
+  return {
+    prompts: promptCount,
+    DRAFT: counts.DRAFT ?? 0,
+    QUEUED: counts.QUEUED ?? 0,
+    GENERATING: counts.GENERATING ?? 0,
+    READY_FOR_REVIEW: counts.READY_FOR_REVIEW ?? 0,
+    APPROVED: counts.APPROVED ?? 0,
+    REJECTED: counts.REJECTED ?? 0,
+    SCHEDULED: counts.SCHEDULED ?? 0,
+    PUBLISHING: counts.PUBLISHING ?? 0,
+    PUBLISHED: counts.PUBLISHED ?? 0,
+    FAILED: counts.FAILED ?? 0,
+    CANCELLED: counts.CANCELLED ?? 0
+  };
+}
+
+export async function listPrompts(input?: { search?: string; channelType?: 'GENERAL' | 'KIDS_CHANNEL_ONLY'; active?: boolean; take?: number }) {
+  const search = input?.search?.trim();
+  return prisma.prompt.findMany({
+    where: {
+      active: input?.active,
+      channelType: input?.channelType,
+      OR: search ? [
+        { externalPromptId: { contains: search, mode: 'insensitive' } },
+        { category: { contains: search, mode: 'insensitive' } },
+        { concept: { contains: search, mode: 'insensitive' } }
+      ] : undefined
+    },
+    orderBy: { updatedAt: 'desc' },
+    take: Math.min(input?.take ?? 50, 100)
+  });
+}
+
+export async function listJobs(input?: { status?: PrismaJobStatus; take?: number }) {
+  return prisma.productionJob.findMany({
+    where: { status: input?.status },
+    include: { prompt: true, channel: true, schedule: true },
+    orderBy: { updatedAt: 'desc' },
+    take: Math.min(input?.take ?? 50, 100)
+  });
+}
+
+export async function queuePrompt(promptId: string, actor = 'dashboard') {
+  return prisma.$transaction(async (tx) => {
+    const prompt = await tx.prompt.findUnique({ where: { id: promptId } });
+    if (!prompt || !prompt.active) throw new Error('Prompt not found or inactive');
+
+    const channel = await tx.channel.findFirst({
+      where: { enabled: true, type: prompt.channelType },
+      orderBy: { createdAt: 'asc' }
+    });
+    if (!channel) throw new Error(`No enabled ${prompt.channelType} channel is configured`);
+
+    const job = await tx.productionJob.create({
+      data: {
+        promptId: prompt.id,
+        channelId: channel.id,
+        status: PrismaJobStatus.QUEUED,
+        provider: process.env.VIDEO_PROVIDER || 'mock',
+        requestedDuration: prompt.targetDurationSeconds
+      }
+    });
+
+    await tx.activityLog.create({
+      data: { actor, action: 'JOB_QUEUED', entityType: 'ProductionJob', entityId: job.id, metadata: { promptId } }
+    });
+    return job;
+  });
+}
+
+export async function transitionJob(jobId: string, to: JobStatus, options?: { actor?: string; source?: 'DASHBOARD' | 'TELEGRAM'; notes?: string }) {
+  const actor = options?.actor ?? 'system';
+  return prisma.$transaction(async (tx) => {
+    const job = await tx.productionJob.findUnique({ where: { id: jobId } });
+    if (!job) throw new Error('Production job not found');
+
+    assertTransition(job.status as JobStatus, to);
+
+    const updated = await tx.productionJob.update({
+      where: { id: job.id },
+      data: {
+        status: to as PrismaJobStatus,
+        retryCount: to === 'QUEUED' && job.status === PrismaJobStatus.FAILED ? { increment: 1 } : undefined,
+        failureReason: to === 'QUEUED' ? null : undefined
+      }
+    });
+
+    if (to === 'APPROVED' || to === 'REJECTED') {
+      await tx.reviewDecision.create({
+        data: {
+          jobId: job.id,
+          decision: to === 'APPROVED' ? ReviewDecisionType.APPROVED : ReviewDecisionType.REJECTED,
+          source: options?.source === 'TELEGRAM' ? ReviewSource.TELEGRAM : ReviewSource.DASHBOARD,
+          notes: options?.notes
+        }
+      });
+    }
+
+    await tx.activityLog.create({
+      data: {
+        actor,
+        action: 'JOB_STATUS_CHANGED',
+        entityType: 'ProductionJob',
+        entityId: job.id,
+        metadata: { from: job.status, to }
+      }
+    });
+    return updated;
+  });
+}
+
+export async function attachGeneratedMedia(jobId: string, input: { providerJobId?: string; videoUrl?: string; thumbnailUrl?: string }) {
+  return prisma.productionJob.update({
+    where: { id: jobId },
+    data: input
+  });
+}
+
+export async function scheduleApprovedJob(jobId: string, input: { publishAt: Date; timezone: string; visibility?: 'PRIVATE' | 'UNLISTED' | 'PUBLIC'; title?: string; description?: string; hashtags?: string[] }, actor = 'dashboard') {
+  return prisma.$transaction(async (tx) => {
+    const job = await tx.productionJob.findUnique({ where: { id: jobId } });
+    if (!job) throw new Error('Production job not found');
+    assertTransition(job.status as JobStatus, 'SCHEDULED');
+
+    const visibility = Visibility[input.visibility ?? 'PRIVATE'];
+    const updated = await tx.productionJob.update({
+      where: { id: job.id },
+      data: {
+        status: PrismaJobStatus.SCHEDULED,
+        title: input.title ?? job.title,
+        description: input.description ?? job.description,
+        hashtags: input.hashtags ?? job.hashtags
+      }
+    });
+
+    await tx.publishSchedule.upsert({
+      where: { jobId: job.id },
+      create: { jobId: job.id, publishAt: input.publishAt, timezone: input.timezone, visibility },
+      update: { publishAt: input.publishAt, timezone: input.timezone, visibility, status: 'PENDING' }
+    });
+
+    await tx.activityLog.create({
+      data: { actor, action: 'JOB_SCHEDULED', entityType: 'ProductionJob', entityId: job.id, metadata: { publishAt: input.publishAt.toISOString(), visibility } }
+    });
+    return updated;
+  });
+}
+
+export async function recentActivity(take = 20) {
+  return prisma.activityLog.findMany({ orderBy: { createdAt: 'desc' }, take: Math.min(take, 50) });
+}
