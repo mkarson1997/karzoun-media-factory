@@ -9,7 +9,7 @@ function equalState(left: string, right: string) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function redirectAndClear(next: URL, request: NextRequest) {
+function redirectAndClear(next: URL) {
   const response = NextResponse.redirect(next);
   response.cookies.delete('youtube_oauth_state');
   response.cookies.delete('youtube_oauth_channel');
@@ -26,17 +26,17 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     next.searchParams.set('youtube', 'denied');
-    return redirectAndClear(next, request);
+    return redirectAndClear(next);
   }
   if (!code || !state || !expectedState || !equalState(state, expectedState) || !factoryChannelId) {
     next.searchParams.set('youtube', 'state-error');
-    return redirectAndClear(next, request);
+    return redirectAndClear(next);
   }
 
   const factoryChannel = await prisma.channel.findUnique({ where: { id: factoryChannelId } });
   if (!factoryChannel || !factoryChannel.enabled) {
     next.searchParams.set('youtube', 'channel-error');
-    return redirectAndClear(next, request);
+    return redirectAndClear(next);
   }
 
   try {
@@ -67,9 +67,9 @@ export async function GET(request: NextRequest) {
 
     next.searchParams.set('youtube', 'connected');
     next.searchParams.set('channelId', factoryChannel.id);
-    return redirectAndClear(next, request);
+    return redirectAndClear(next);
   } catch {
     next.searchParams.set('youtube', 'exchange-error');
-    return redirectAndClear(next, request);
+    return redirectAndClear(next);
   }
 }
