@@ -1,7 +1,7 @@
 import { google } from 'googleapis';
 import { prisma } from './prisma';
 import { calculatePerformance } from './performance-score';
-import { getAuthorizedYouTubeClient } from './youtube-auth';
+import { getAuthorizedYouTubeClient, getYouTubeConnectionStatus } from './youtube-auth';
 
 const METRICS = [
   'views',
@@ -16,7 +16,6 @@ const METRICS = [
 ] as const;
 
 type MetricName = (typeof METRICS)[number];
-
 type AnalyticsRow = Partial<Record<MetricName, number>> & { video: string };
 
 function yyyyMmDd(date: Date) {
@@ -51,8 +50,8 @@ function parseRows(data: { columnHeaders?: Array<{ name?: string | null }> | nul
   return result;
 }
 
-async function queryAnalytics(videoIds: string[], startDate: Date, endDate: Date) {
-  const auth = await getAuthorizedYouTubeClient();
+async function queryAnalytics(factoryChannelId: string, videoIds: string[], startDate: Date, endDate: Date) {
+  const auth = await getAuthorizedYouTubeClient(factoryChannelId);
   const analytics = google.youtubeAnalytics({ version: 'v2', auth });
 
   const query = async (metrics: string) => analytics.reports.query({
@@ -68,17 +67,15 @@ async function queryAnalytics(videoIds: string[], startDate: Date, endDate: Date
   try {
     const response = await query(METRICS.join(','));
     return parseRows(response.data);
-  } catch (error) {
-    // engagedViews is a newer metric. Fall back rather than losing all analytics
-    // if Google rejects it for an unusual account/date combination.
+  } catch {
     const fallbackMetrics = METRICS.filter((metric) => metric !== 'engagedViews').join(',');
     const response = await query(fallbackMetrics);
     return parseRows(response.data);
   }
 }
 
-async function queryCurrentVideoStatistics(videoIds: string[]) {
-  const auth = await getAuthorizedYouTubeClient();
+async function queryCurrentVideoStatistics(factoryChannelId: string, videoIds: string[]) {
+  const auth = await getAuthorizedYouTubeClient(factoryChannelId);
   const youtube = google.youtube({ version: 'v3', auth });
   const response = await youtube.videos.list({ part: ['statistics'], id: videoIds });
 
@@ -97,22 +94,15 @@ export interface AnalyticsSyncSummary {
   failures: Array<{ jobId: string; reason: string }>;
 }
 
-/**
- * Pulls analytics for videos published by this factory.
- * The public targeted YouTube Analytics API currently does not expose the
- * Studio "viewed vs swiped away" card directly, so that field remains null.
- */
 export async function syncPublishedAnalytics(options?: { limit?: number; minAgeMinutes?: number; force?: boolean }): Promise<AnalyticsSyncSummary> {
   const limit = Math.max(1, Math.min(options?.limit ?? 50, 200));
   const minAgeMinutes = Math.max(1, options?.minAgeMinutes ?? Number(process.env.ANALYTICS_SYNC_MINUTES || 30));
   const freshCutoff = new Date(Date.now() - minAgeMinutes * 60_000);
 
   const jobs = await prisma.productionJob.findMany({
-    where: {
-      status: 'PUBLISHED',
-      publishRecord: { youtubeVideoId: { not: null } }
-    },
+    where: { status: 'PUBLISHED', publishRecord: { youtubeVideoId: { not: null } } },
     include: {
+      channel: true,
       prompt: true,
       publishRecord: true,
       analytics: { orderBy: { capturedAt: 'desc' }, take: 1 }
@@ -134,91 +124,116 @@ export async function syncPublishedAnalytics(options?: { limit?: number; minAgeM
     failed: 0,
     failures: []
   };
-
   if (!eligible.length) return summary;
 
-  const videoIds = eligible.map((job) => job.publishRecord?.youtubeVideoId).filter((id): id is string => Boolean(id));
-  if (!videoIds.length) return summary;
-
-  const earliest = eligible.reduce((date, job) => {
-    const published = job.publishRecord?.publishedAt ?? job.updatedAt;
-    return published < date ? published : date;
-  }, new Date());
-
-  const [analyticsRows, currentStats] = await Promise.all([
-    queryAnalytics(videoIds, earliest, new Date()),
-    queryCurrentVideoStatistics(videoIds)
-  ]);
-
+  const groups = new Map<string, typeof eligible>();
   for (const job of eligible) {
-    const videoId = job.publishRecord?.youtubeVideoId;
-    if (!videoId) continue;
+    const list = groups.get(job.channelId) ?? [];
+    list.push(job);
+    groups.set(job.channelId, list);
+  }
 
+  for (const [factoryChannelId, channelJobs] of groups) {
+    const connection = await getYouTubeConnectionStatus(factoryChannelId).catch(() => ({ configured: false, connected: false }));
+    if (!connection.connected) {
+      for (const job of channelJobs) {
+        summary.failed++;
+        summary.failures.push({ jobId: job.id, reason: `YouTube is not connected for ${job.channel.name}` });
+      }
+      continue;
+    }
+
+    const videoIds = channelJobs.map((job) => job.publishRecord?.youtubeVideoId).filter((id): id is string => Boolean(id));
+    if (!videoIds.length) continue;
+    const earliest = channelJobs.reduce((date, job) => {
+      const published = job.publishRecord?.publishedAt ?? job.updatedAt;
+      return published < date ? published : date;
+    }, new Date());
+
+    let analyticsRows: Map<string, AnalyticsRow>;
+    let currentStats: Map<string, { views: number; likes: number; comments: number }>;
     try {
-      const row = analyticsRows.get(videoId) ?? { video: videoId };
-      const current = currentStats.get(videoId);
-      const views = Math.max(numeric(row.views), current?.views ?? 0);
-      const likes = Math.max(numeric(row.likes), current?.likes ?? 0);
-      const comments = Math.max(numeric(row.comments), current?.comments ?? 0);
-      const engagedViews = numeric(row.engagedViews);
-      const shares = numeric(row.shares);
-      const subscribersGained = numeric(row.subscribersGained);
-      const subscribersLost = numeric(row.subscribersLost);
-      const averagePercentageViewed = row.averageViewPercentage == null ? null : numeric(row.averageViewPercentage);
-      const averageViewDuration = row.averageViewDuration == null ? null : numeric(row.averageViewDuration);
+      [analyticsRows, currentStats] = await Promise.all([
+        queryAnalytics(factoryChannelId, videoIds, earliest, new Date()),
+        queryCurrentVideoStatistics(factoryChannelId, videoIds)
+      ]);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message.slice(0, 240) : 'YouTube analytics query failed';
+      for (const job of channelJobs) {
+        summary.failed++;
+        summary.failures.push({ jobId: job.id, reason });
+      }
+      continue;
+    }
 
-      const performance = calculatePerformance({
-        views,
-        engagedViews,
-        likes,
-        comments,
-        shares,
-        subscribersGained,
-        averagePercentageViewed
-      });
+    for (const job of channelJobs) {
+      const videoId = job.publishRecord?.youtubeVideoId;
+      if (!videoId) continue;
+      try {
+        const row = analyticsRows.get(videoId) ?? { video: videoId };
+        const current = currentStats.get(videoId);
+        const views = Math.max(numeric(row.views), current?.views ?? 0);
+        const likes = Math.max(numeric(row.likes), current?.likes ?? 0);
+        const comments = Math.max(numeric(row.comments), current?.comments ?? 0);
+        const engagedViews = numeric(row.engagedViews);
+        const shares = numeric(row.shares);
+        const subscribersGained = numeric(row.subscribersGained);
+        const subscribersLost = numeric(row.subscribersLost);
+        const averagePercentageViewed = row.averageViewPercentage == null ? null : numeric(row.averageViewPercentage);
+        const averageViewDuration = row.averageViewDuration == null ? null : numeric(row.averageViewDuration);
 
-      const publishedAt = job.publishRecord?.publishedAt ?? job.updatedAt;
-      const ageHours = Math.max(0, (Date.now() - publishedAt.getTime()) / 3_600_000);
-
-      await prisma.analyticsSnapshot.create({
-        data: {
-          jobId: job.id,
-          source: 'YOUTUBE_ANALYTICS',
+        const performance = calculatePerformance({
           views,
           engagedViews,
           likes,
           comments,
           shares,
           subscribersGained,
-          subscribersLost,
-          averageViewDuration,
-          averagePercentageViewed,
-          engagedViewRate: performance.engagedViewRate,
-          interactionRate: performance.interactionRate,
-          subscriberConversionRate: performance.subscriberConversionRate,
-          viewedVsSwipedAway: null,
-          first24hPerformance: ageHours <= 24 ? performance.score : null,
-          first48hPerformance: ageHours <= 48 ? performance.score : null,
-          performanceScore: performance.score
-        }
-      });
+          averagePercentageViewed
+        });
 
-      await prisma.activityLog.create({
-        data: {
-          actor: 'analytics-worker',
-          action: 'ANALYTICS_SNAPSHOT_CAPTURED',
-          entityType: 'ProductionJob',
-          entityId: job.id,
-          metadata: { videoId, views, score: performance.score, sample: performance.sampleLabel }
-        }
-      });
-      summary.synced++;
-    } catch (error) {
-      summary.failed++;
-      summary.failures.push({
-        jobId: job.id,
-        reason: error instanceof Error ? error.message.slice(0, 240) : 'Unknown analytics ingestion error'
-      });
+        const publishedAt = job.publishRecord?.publishedAt ?? job.updatedAt;
+        const ageHours = Math.max(0, (Date.now() - publishedAt.getTime()) / 3_600_000);
+        await prisma.analyticsSnapshot.create({
+          data: {
+            jobId: job.id,
+            source: 'YOUTUBE_ANALYTICS',
+            views,
+            engagedViews,
+            likes,
+            comments,
+            shares,
+            subscribersGained,
+            subscribersLost,
+            averageViewDuration,
+            averagePercentageViewed,
+            engagedViewRate: performance.engagedViewRate,
+            interactionRate: performance.interactionRate,
+            subscriberConversionRate: performance.subscriberConversionRate,
+            viewedVsSwipedAway: null,
+            first24hPerformance: ageHours <= 24 ? performance.score : null,
+            first48hPerformance: ageHours <= 48 ? performance.score : null,
+            performanceScore: performance.score
+          }
+        });
+
+        await prisma.activityLog.create({
+          data: {
+            actor: 'analytics-worker',
+            action: 'ANALYTICS_SNAPSHOT_CAPTURED',
+            entityType: 'ProductionJob',
+            entityId: job.id,
+            metadata: { factoryChannelId, youtubeVideoId: videoId, views, score: performance.score, sample: performance.sampleLabel }
+          }
+        });
+        summary.synced++;
+      } catch (error) {
+        summary.failed++;
+        summary.failures.push({
+          jobId: job.id,
+          reason: error instanceof Error ? error.message.slice(0, 240) : 'Unknown analytics ingestion error'
+        });
+      }
     }
   }
 
