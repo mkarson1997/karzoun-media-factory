@@ -1,5 +1,6 @@
 import { listPrompts } from '@/src/lib/control-plane';
 import { ApiActionButton } from '@/app/components/ApiActionButton';
+import { PromptImportForm } from '@/app/components/PromptImportForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,8 +20,10 @@ export default async function PromptsPage({ searchParams }: { searchParams: Prom
       <section className="hero">
         <div className="eyebrow">LIBRARY</div>
         <h1>Prompt Library</h1>
-        <p>Search the idea bank and send one concept into production. Kids-only prompts stay isolated from the general channel.</p>
+        <p>Upload the idea bank from your phone, search it, and send selected concepts into production. Kids-only prompts stay isolated from the general channel.</p>
       </section>
+
+      {databaseReady ? <PromptImportForm /> : <div className="notice">Database is not ready. Configure it before importing the 1,000-prompt CSV.</div>}
 
       <form className="card filter-bar" method="get">
         <input className="input" name="q" defaultValue={params.q} placeholder="Search ID, category or concept" />
@@ -31,8 +34,6 @@ export default async function PromptsPage({ searchParams }: { searchParams: Prom
         </select>
         <button className="button" type="submit">Filter</button>
       </form>
-
-      {!databaseReady ? <div className="notice">Database is not ready. Configure it before importing the 1,000-prompt CSV.</div> : null}
 
       <section className="card">
         <div className="section-title">{prompts.length} prompt{prompts.length === 1 ? '' : 's'} shown</div>
@@ -48,7 +49,7 @@ export default async function PromptsPage({ searchParams }: { searchParams: Prom
               <details><summary className="button secondary">View prompt</summary><pre className="prompt-text">{prompt.fullPrompt}</pre></details>
             </div>
           </article>
-        ))}</div> : <p className="muted">No prompts yet. Run the CSV importer to load the library.</p>}
+        ))}</div> : <p className="muted">No prompts yet. Upload the CSV bank above.</p>}
       </section>
     </div>
   );
