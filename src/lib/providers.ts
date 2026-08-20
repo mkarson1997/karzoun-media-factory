@@ -21,6 +21,7 @@ export interface VideoGenerationProvider {
 
 export interface PublishingRequest {
   jobId: string;
+  factoryChannelId?: string;
   videoUrl: string;
   title: string;
   description: string;
@@ -39,7 +40,7 @@ export interface PublishingResult {
 export interface PublishingProvider {
   uploadVideo(input: PublishingRequest): Promise<PublishingResult>;
   scheduleVideo(input: PublishingRequest): Promise<PublishingResult>;
-  getVideoStatus(externalVideoId: string): Promise<PublishingResult>;
+  getVideoStatus(externalVideoId: string, factoryChannelId?: string): Promise<PublishingResult>;
 }
 
 export class MockVideoProvider implements VideoGenerationProvider {
