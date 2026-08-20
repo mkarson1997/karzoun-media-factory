@@ -2,10 +2,9 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from './lib/prisma';
 import { attachGeneratedMedia, transitionJob } from './lib/control-plane';
 import { getCreativeDirector, type CreativePlan } from './lib/creative-director';
-import { getVideoGenerationProvider, MockPublishingProvider } from './lib/providers';
+import { getPublishingProvider, getVideoGenerationProvider } from './lib/providers';
 import { createTelegramBot, notifyOperator } from './lib/telegram';
 
-const publishingProvider = new MockPublishingProvider();
 let stopping = false;
 
 async function prepareCreativePlan(job: { id: string; requestedDuration: number; creativeBrief: Prisma.JsonValue | null; prompt: { externalPromptId: string; category: string; concept: string; fullPrompt: string; channelType: 'GENERAL' | 'KIDS_CHANNEL_ONLY' } }) {
@@ -81,7 +80,6 @@ async function startOneGeneration() {
   if (!queued) return false;
 
   try {
-    // GENERATING covers both creative preparation and rendering, so any failure can safely enter FAILED.
     await transitionJob(queued.id, 'GENERATING', { actor: 'worker' });
     const creativePlan = await prepareCreativePlan(queued);
     const provider = await getVideoGenerationProvider(queued.provider);
@@ -144,27 +142,47 @@ async function processOnePublishJob() {
   });
   if (!due?.schedule) return;
 
+  const publishingName = process.env.PUBLISHING_PROVIDER || 'mock';
   try {
     await transitionJob(due.id, 'PUBLISHING', { actor: 'worker' });
     await prisma.publishSchedule.update({ where: { jobId: due.id }, data: { status: 'PROCESSING' } });
+    if (publishingName === 'youtube' && !due.videoUrl) throw new Error('Real YouTube publishing requires a generated video URL');
+
+    const publishingProvider = await getPublishingProvider(publishingName);
     const result = await publishingProvider.uploadVideo({
       jobId: due.id,
       videoUrl: due.videoUrl || 'mock://generated-video',
       title: due.title || due.prompt.concept.slice(0, 55),
-      description: due.description || '',
-      visibility: due.schedule.visibility
+      description: [due.description || '', due.hashtags.join(' ')].filter(Boolean).join('\n\n'),
+      visibility: due.schedule.visibility,
+      madeForKids: due.prompt.channelType === 'KIDS_CHANNEL_ONLY',
+      tags: due.hashtags
     });
+
+    const recordStatus = publishingName === 'youtube' ? 'YOUTUBE_UPLOADED' : 'MOCK_PUBLISHED';
+    const actualVisibility = result.visibility ?? 'PRIVATE';
     await prisma.publishRecord.upsert({
       where: { jobId: due.id },
-      create: { jobId: due.id, youtubeVideoId: result.externalVideoId, publishedAt: new Date(), status: 'MOCK_PUBLISHED' },
-      update: { youtubeVideoId: result.externalVideoId, publishedAt: new Date(), status: 'MOCK_PUBLISHED', error: null }
+      create: { jobId: due.id, youtubeVideoId: result.externalVideoId, publishedAt: new Date(), visibility: actualVisibility, status: recordStatus },
+      update: { youtubeVideoId: result.externalVideoId, publishedAt: new Date(), visibility: actualVisibility, status: recordStatus, error: null }
     });
     await prisma.publishSchedule.update({ where: { jobId: due.id }, data: { status: 'COMPLETED' } });
     await transitionJob(due.id, 'PUBLISHED', { actor: 'worker' });
-    await notifyOperator(`✅ ${due.prompt.externalPromptId} completed the MOCK publishing flow. No real YouTube upload occurred.`).catch(() => undefined);
+
+    if (publishingName === 'youtube') {
+      await notifyOperator(`✅ ${due.prompt.externalPromptId} uploaded to YouTube as ${actualVisibility}.\nVideo ID: ${result.externalVideoId ?? 'unknown'}`).catch(() => undefined);
+    } else {
+      await notifyOperator(`✅ ${due.prompt.externalPromptId} completed the MOCK publishing flow. No real YouTube upload occurred.`).catch(() => undefined);
+    }
   } catch (error) {
+    const message = error instanceof Error ? error.message.slice(0, 500) : 'Publishing failed';
     await transitionJob(due.id, 'FAILED', { actor: 'worker' }).catch(() => undefined);
     await prisma.publishSchedule.update({ where: { jobId: due.id }, data: { status: 'FAILED' } }).catch(() => undefined);
+    await prisma.publishRecord.upsert({
+      where: { jobId: due.id },
+      create: { jobId: due.id, visibility: 'PRIVATE', status: 'FAILED', error: message },
+      update: { status: 'FAILED', error: message }
+    }).catch(() => undefined);
     await notifyOperator(`⚠️ Publishing failed for ${due.prompt.externalPromptId}.`).catch(() => undefined);
   }
 }
@@ -184,7 +202,7 @@ async function main() {
     console.log('Telegram disabled until TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USER_ID are configured.');
   }
 
-  console.log(`Karzoun Media Factory worker started. Video provider: ${process.env.VIDEO_PROVIDER || 'mock'}.`);
+  console.log(`Karzoun Media Factory worker started. Video provider: ${process.env.VIDEO_PROVIDER || 'mock'}. Publishing provider: ${process.env.PUBLISHING_PROVIDER || 'mock'}.`);
   while (!stopping) {
     try {
       await processCycle();
