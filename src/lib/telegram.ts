@@ -1,5 +1,6 @@
 import { Markup, Telegraf, type Context } from 'telegraf';
 import { getFactoryCounters, listJobs, requestRegeneration, transitionJob } from './control-plane';
+import { prisma } from './prisma';
 
 function telegramConfig() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -14,6 +15,10 @@ function isAuthorized(ctx: Context, allowedUserId: string) {
 
 function shortConcept(value: string, max = 100) {
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+}
+
+function compact(value: number) {
+  return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 }
 
 export async function notifyOperator(text: string) {
@@ -40,7 +45,7 @@ export function createTelegramBot() {
 
   bot.start(async (ctx) => {
     await ctx.reply(
-      '🏭 Karzoun Media Factory is online.\n\n/status — factory counters\n/queue — latest jobs\n/review — videos waiting for review\n/help — commands',
+      '🏭 Karzoun Media Factory is online.\n\n/status — factory counters\n/queue — latest jobs\n/review — videos waiting for review\n/analytics — latest performance\n/help — commands',
       Markup.inlineKeyboard([[Markup.button.url('Open Dashboard', `${baseUrl}/dashboard`)]])
     );
   });
@@ -83,8 +88,36 @@ export function createTelegramBot() {
     }
   });
 
+  bot.command('analytics', async (ctx) => {
+    try {
+      const snapshots = await prisma.analyticsSnapshot.findMany({
+        include: { job: { include: { prompt: true } } },
+        orderBy: { capturedAt: 'desc' },
+        take: 100
+      });
+      const latest = new Map<string, (typeof snapshots)[number]>();
+      for (const item of snapshots) if (!latest.has(item.jobId)) latest.set(item.jobId, item);
+      const videos = [...latest.values()];
+      if (!videos.length) {
+        await ctx.reply('📊 No real YouTube analytics yet.', Markup.inlineKeyboard([[Markup.button.url('Open Analytics', `${baseUrl}/analytics`)]]));
+        return;
+      }
+
+      const totalViews = videos.reduce((sum, item) => sum + item.views, 0);
+      const totalSubs = videos.reduce((sum, item) => sum + item.subscribersGained, 0);
+      const winners = videos.sort((a, b) => (b.performanceScore ?? 0) - (a.performanceScore ?? 0)).slice(0, 3);
+      const winnerText = winners.map((item, index) => `${index + 1}. ${item.job.prompt.externalPromptId} · ${item.performanceScore?.toFixed(1) ?? '—'} score · ${compact(item.views)} views`).join('\n');
+      await ctx.reply(
+        `📊 Factory analytics\n\nVideos tracked: ${videos.length}\nViews: ${compact(totalViews)}\nSubscribers gained: ${compact(totalSubs)}\n\nTop performers\n${winnerText}`,
+        Markup.inlineKeyboard([[Markup.button.url('Open Analytics', `${baseUrl}/analytics`)]])
+      );
+    } catch {
+      await ctx.reply('Could not load analytics.');
+    }
+  });
+
   bot.command('help', async (ctx) => {
-    await ctx.reply('/status — factory counters\n/queue — latest jobs\n/review — approve, regenerate or reject\n/help — commands');
+    await ctx.reply('/status — factory counters\n/queue — latest jobs\n/review — approve, regenerate or reject\n/analytics — latest performance\n/help — commands');
   });
 
   bot.action(/^approve:(.+)$/, async (ctx) => {
