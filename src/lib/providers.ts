@@ -26,11 +26,14 @@ export interface PublishingRequest {
   description: string;
   publishAt?: Date;
   visibility: 'PRIVATE' | 'UNLISTED' | 'PUBLIC';
+  madeForKids?: boolean;
+  tags?: string[];
 }
 
 export interface PublishingResult {
   externalVideoId?: string;
   status: JobStatus;
+  visibility?: 'PRIVATE' | 'UNLISTED' | 'PUBLIC';
 }
 
 export interface PublishingProvider {
@@ -69,14 +72,23 @@ export async function getVideoGenerationProvider(name = process.env.VIDEO_PROVID
 
 export class MockPublishingProvider implements PublishingProvider {
   async uploadVideo(input: PublishingRequest): Promise<PublishingResult> {
-    return { externalVideoId: `mock-youtube-${input.jobId}`, status: 'PUBLISHED' };
+    return { externalVideoId: `mock-youtube-${input.jobId}`, status: 'PUBLISHED', visibility: input.visibility };
   }
 
   async scheduleVideo(input: PublishingRequest): Promise<PublishingResult> {
-    return { externalVideoId: `mock-youtube-${input.jobId}`, status: 'SCHEDULED' };
+    return { externalVideoId: `mock-youtube-${input.jobId}`, status: 'SCHEDULED', visibility: input.visibility };
   }
 
   async getVideoStatus(externalVideoId: string): Promise<PublishingResult> {
-    return { externalVideoId, status: 'PUBLISHED' };
+    return { externalVideoId, status: 'PUBLISHED', visibility: 'PRIVATE' };
   }
+}
+
+export async function getPublishingProvider(name = process.env.PUBLISHING_PROVIDER || 'mock'): Promise<PublishingProvider> {
+  if (name === 'mock') return new MockPublishingProvider();
+  if (name === 'youtube') {
+    const { YouTubePublishingProvider } = await import('./youtube-provider');
+    return new YouTubePublishingProvider();
+  }
+  throw new Error(`Unsupported publishing provider: ${name}`);
 }
