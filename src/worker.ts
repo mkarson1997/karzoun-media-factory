@@ -1,11 +1,43 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from './lib/prisma';
 import { attachGeneratedMedia, transitionJob } from './lib/control-plane';
+import { getCreativeDirector, type CreativePlan } from './lib/creative-director';
 import { MockPublishingProvider, MockVideoProvider } from './lib/providers';
 import { createTelegramBot, notifyOperator } from './lib/telegram';
 
 const videoProvider = new MockVideoProvider();
 const publishingProvider = new MockPublishingProvider();
 let stopping = false;
+
+async function prepareCreativePlan(job: { id: string; requestedDuration: number; creativeBrief: Prisma.JsonValue | null; prompt: { externalPromptId: string; category: string; concept: string; fullPrompt: string; channelType: 'GENERAL' | 'KIDS_CHANNEL_ONLY' } }) {
+  if (job.creativeBrief) return job.creativeBrief as unknown as CreativePlan;
+
+  const director = getCreativeDirector();
+  const result = await director.prepare({
+    externalPromptId: job.prompt.externalPromptId,
+    category: job.prompt.category,
+    concept: job.prompt.concept,
+    fullPrompt: job.prompt.fullPrompt,
+    durationSeconds: job.requestedDuration,
+    channelType: job.prompt.channelType
+  });
+
+  await prisma.productionJob.update({
+    where: { id: job.id },
+    data: {
+      creativeBrief: JSON.parse(JSON.stringify(result.plan)) as Prisma.InputJsonValue,
+      creativeModel: result.model,
+      creativePreparedAt: new Date(),
+      title: result.plan.title,
+      description: result.plan.description,
+      hashtags: result.plan.hashtags
+    }
+  });
+  await prisma.activityLog.create({
+    data: { actor: 'creative-director', action: 'CREATIVE_PLAN_PREPARED', entityType: 'ProductionJob', entityId: job.id, metadata: { model: result.model } }
+  });
+  return result.plan;
+}
 
 async function processOneGenerationJob() {
   const generating = await prisma.productionJob.findFirst({
@@ -37,13 +69,18 @@ async function processOneGenerationJob() {
   if (!queued) return;
 
   try {
-    const result = await videoProvider.generateVideo({ jobId: queued.id, prompt: queued.prompt.fullPrompt, durationSeconds: queued.requestedDuration });
+    const creativePlan = await prepareCreativePlan(queued);
+    const result = await videoProvider.generateVideo({
+      jobId: queued.id,
+      prompt: JSON.stringify(creativePlan),
+      durationSeconds: queued.requestedDuration
+    });
     await transitionJob(queued.id, 'GENERATING', { actor: 'worker' });
     await attachGeneratedMedia(queued.id, { providerJobId: result.providerJobId });
   } catch (error) {
     await transitionJob(queued.id, 'FAILED', { actor: 'worker' }).catch(() => undefined);
-    await prisma.productionJob.update({ where: { id: queued.id }, data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Mock generation failed' } }).catch(() => undefined);
-    await notifyOperator(`⚠️ Generation failed for ${queued.prompt.externalPromptId}.`).catch(() => undefined);
+    await prisma.productionJob.update({ where: { id: queued.id }, data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Creative planning or generation failed' } }).catch(() => undefined);
+    await notifyOperator(`⚠️ Creative planning/generation failed for ${queued.prompt.externalPromptId}.`).catch(() => undefined);
   }
 }
 
@@ -113,7 +150,7 @@ async function main() {
     console.log('Telegram disabled until TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USER_ID are configured.');
   }
 
-  console.log('Karzoun Media Factory worker started in mock-safe mode.');
+  console.log('Karzoun Media Factory worker started.');
   while (!stopping) {
     try {
       await processCycle();
