@@ -20,7 +20,13 @@ export function safeError(error: unknown) {
       'Cross-origin mutation rejected',
       'Daily production limit reached',
       'Daily publishing limit reached',
-      'Regeneration is only available'
+      'Regeneration is only available',
+      'YouTube is not connected',
+      'YouTube OAuth requires',
+      'YouTube uploads are locked',
+      'Public YouTube publishing is locked',
+      'Paid video generation is locked',
+      'OpenArt MCP requires'
     ].find((prefix) => error.message.startsWith(prefix));
     if (safe) return error.message;
   }
