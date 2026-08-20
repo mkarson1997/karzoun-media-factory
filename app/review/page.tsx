@@ -13,7 +13,7 @@ export default async function ReviewPage() {
       <section className="hero">
         <div className="eyebrow">QUALITY GATE</div>
         <h1>Review</h1>
-        <p>Nothing publishes automatically here. Watch the result, approve it, reject it, or send it back for regeneration.</p>
+        <p>Nothing publishes automatically here. Inspect the creative plan and the generated result, then approve it or reject it.</p>
       </section>
 
       {!databaseReady ? <div className="notice">Database is not configured.</div> : null}
@@ -22,13 +22,15 @@ export default async function ReviewPage() {
         {jobs.length ? jobs.map((job) => (
           <article className="card review-card" key={job.id}>
             <div className="video-frame">
-              {job.videoUrl ? <video controls playsInline preload="metadata" poster={job.thumbnailUrl ?? undefined} src={job.videoUrl} /> : <div className="video-placeholder">VIDEO PREVIEW<br/><small>Mock media will appear here</small></div>}
+              {job.videoUrl ? <video controls playsInline preload="metadata" poster={job.thumbnailUrl ?? undefined} src={job.videoUrl} /> : <div className="video-placeholder" style={job.thumbnailUrl ? { backgroundImage: `linear-gradient(rgba(7,11,22,.25),rgba(7,11,22,.65)),url(${job.thumbnailUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}>VIDEO PREVIEW<br/><small>{job.provider.startsWith('mock') ? 'Mock mode · no paid render' : 'Render pending'}</small></div>}
             </div>
             <div className="prompt-head">
               <div><strong>{job.prompt.externalPromptId}</strong><small className="block muted">{job.prompt.category} · {job.requestedDuration}s · {job.provider}</small></div>
               <span className="badge">{job.prompt.channelType === 'KIDS_CHANNEL_ONLY' ? 'KIDS ONLY' : 'GENERAL'}</span>
             </div>
             <p>{job.prompt.concept}</p>
+            <div className="row"><span>Creative director</span><span className="badge">{job.creativeModel ?? 'NOT PREPARED'}</span></div>
+            {job.creativeBrief ? <details><summary className="button secondary">Creative plan</summary><pre className="prompt-text">{JSON.stringify(job.creativeBrief, null, 2)}</pre></details> : null}
             <div className="actions action-grid">
               <ApiActionButton endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'APPROVED' }} label="✓ Approve" />
               <ApiActionButton className="button danger" endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'REJECTED' }} label="Reject" />
