@@ -81,7 +81,7 @@ export async function queuePrompt(promptId: string, actor = 'dashboard') {
     });
 
     await tx.activityLog.create({
-      data: { actor, action: 'JOB_QUEUED', entityType: 'ProductionJob', entityId: job.id, metadata: { promptId } }
+      data: { actor, action: 'JOB_QUEUED', entityType: 'ProductionJob', entityId: job.id, metadata: { promptId, channelId: channel.id } }
     });
     return job;
   });
@@ -131,6 +131,32 @@ export async function transitionJob(jobId: string, to: JobStatus, options?: { ac
     await sendTelegramNotification(`✅ ${result.externalPromptId} approved and ready to schedule.`).catch(() => undefined);
   }
   return result.updated;
+}
+
+/**
+ * Atomically claims a worker transition. If another worker/process already
+ * changed the status, this returns false without mutating the job.
+ */
+export async function claimJobTransition(jobId: string, from: JobStatus, to: JobStatus, actor = 'worker') {
+  assertTransition(from, to);
+  return prisma.$transaction(async (tx) => {
+    const claimed = await tx.productionJob.updateMany({
+      where: { id: jobId, status: from as PrismaJobStatus },
+      data: { status: to as PrismaJobStatus }
+    });
+    if (claimed.count !== 1) return false;
+
+    await tx.activityLog.create({
+      data: {
+        actor,
+        action: 'JOB_STATUS_CLAIMED',
+        entityType: 'ProductionJob',
+        entityId: jobId,
+        metadata: { from, to }
+      }
+    });
+    return true;
+  });
 }
 
 export async function requestRegeneration(jobId: string, options?: { actor?: string; source?: 'DASHBOARD' | 'TELEGRAM' }) {
