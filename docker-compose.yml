@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: kmf
       POSTGRES_USER: kmf
-      POSTGRES_PASSWORD: kmf-local-only
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kmf-local-only}
     volumes:
       - kmf-postgres:/var/lib/postgresql/data
     healthcheck:
@@ -12,14 +12,20 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
 
   app:
     build: .
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://kmf:kmf-local-only@db:5432/kmf?schema=public
-      VIDEO_PROVIDER: mock
+      DATABASE_URL: postgresql://kmf:${POSTGRES_PASSWORD:-kmf-local-only}@db:5432/kmf?schema=public
+      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-mock}
+      PUBLISHING_PROVIDER: ${PUBLISHING_PROVIDER:-mock}
+      CREATIVE_DIRECTOR: ${CREATIVE_DIRECTOR:-mock}
+      ALLOW_PAID_GENERATION: ${ALLOW_PAID_GENERATION:-false}
+      ALLOW_YOUTUBE_UPLOAD: ${ALLOW_YOUTUBE_UPLOAD:-false}
+      ALLOW_PUBLIC_PUBLISHING: ${ALLOW_PUBLIC_PUBLISHING:-false}
     ports:
       - "3000:3000"
     depends_on:
@@ -31,15 +37,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
 
   worker:
     build: .
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://kmf:kmf-local-only@db:5432/kmf?schema=public
-      VIDEO_PROVIDER: mock
+      DATABASE_URL: postgresql://kmf:${POSTGRES_PASSWORD:-kmf-local-only}@db:5432/kmf?schema=public
+      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-mock}
+      PUBLISHING_PROVIDER: ${PUBLISHING_PROVIDER:-mock}
+      CREATIVE_DIRECTOR: ${CREATIVE_DIRECTOR:-mock}
+      ALLOW_PAID_GENERATION: ${ALLOW_PAID_GENERATION:-false}
+      ALLOW_YOUTUBE_UPLOAD: ${ALLOW_YOUTUBE_UPLOAD:-false}
+      ALLOW_PUBLIC_PUBLISHING: ${ALLOW_PUBLIC_PUBLISHING:-false}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+      ANALYTICS_SYNC_MINUTES: ${ANALYTICS_SYNC_MINUTES:-30}
     depends_on:
       app:
         condition: service_healthy
