@@ -205,14 +205,16 @@ async function maybeSyncAnalytics() {
     failed: 1,
     failures: [{ jobId: 'batch', reason: error instanceof Error ? error.message : 'Analytics sync failed' }]
   }));
-
   if (summary.failed > 0) console.warn(`Analytics sync completed with ${summary.failed} failure(s).`);
 }
 
 async function processCycle() {
-  await processOneGenerationJob();
-  await notifyUpcomingSchedule();
-  await processOnePublishJob();
+  const settings = await prisma.appSettings.findUnique({ where: { id: 'singleton' } });
+  if (!settings?.productionPaused) await processOneGenerationJob();
+  if (!settings?.publishingPaused) {
+    await notifyUpcomingSchedule();
+    await processOnePublishJob();
+  }
   await maybeSyncAnalytics();
 }
 
