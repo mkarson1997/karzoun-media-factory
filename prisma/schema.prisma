@@ -94,28 +94,31 @@ model Prompt {
 }
 
 model ProductionJob {
-  id                String              @id @default(cuid())
-  promptId          String
-  channelId         String
-  status            JobStatus           @default(DRAFT)
-  provider          String              @default("mock")
-  providerJobId     String?
-  requestedDuration Int
-  videoUrl          String?
-  thumbnailUrl      String?
-  title             String?
-  description       String?
-  hashtags          String[]            @default([])
-  failureReason     String?
-  retryCount        Int                 @default(0)
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  prompt            Prompt              @relation(fields: [promptId], references: [id], onDelete: Restrict)
-  channel           Channel             @relation(fields: [channelId], references: [id], onDelete: Restrict)
-  reviews           ReviewDecision[]
-  schedule          PublishSchedule?
-  publishRecord     PublishRecord?
-  analytics         AnalyticsSnapshot[]
+  id                 String              @id @default(cuid())
+  promptId           String
+  channelId          String
+  status             JobStatus           @default(DRAFT)
+  provider           String              @default("mock")
+  providerJobId      String?
+  requestedDuration  Int
+  creativeBrief      Json?
+  creativeModel      String?
+  creativePreparedAt DateTime?
+  videoUrl           String?
+  thumbnailUrl       String?
+  title              String?
+  description        String?
+  hashtags           String[]            @default([])
+  failureReason      String?
+  retryCount         Int                 @default(0)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  prompt             Prompt              @relation(fields: [promptId], references: [id], onDelete: Restrict)
+  channel            Channel             @relation(fields: [channelId], references: [id], onDelete: Restrict)
+  reviews            ReviewDecision[]
+  schedule           PublishSchedule?
+  publishRecord      PublishRecord?
+  analytics          AnalyticsSnapshot[]
 
   @@index([status, updatedAt])
   @@index([channelId, status])
