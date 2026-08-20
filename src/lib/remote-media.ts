@@ -1,6 +1,6 @@
 import dns from 'node:dns/promises';
 import net from 'node:net';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 
 const MAX_MEDIA_BYTES = 1024 * 1024 * 1024;
 const MAX_REDIRECTS = 4;
@@ -24,9 +24,19 @@ function blockedIp(address: string) {
   if (family === 4) return blockedIpv4(address);
   if (family === 6) {
     const value = address.toLowerCase();
-    return value === '::1' || value === '::' || value.startsWith('fe8') || value.startsWith('fe9') || value.startsWith('fea') || value.startsWith('feb') || value.startsWith('fc') || value.startsWith('fd');
+    return value === '::1' || value === '::' || value.startsWith('fe8') || value.startsWith('fe9') || value.startsWith('fea') || value.startsWith('feb') || value.startsWith('fc') || value.startsWith('fd') || value.startsWith('ff');
   }
   return true;
+}
+
+function allowedHost(hostname: string) {
+  const configured = (process.env.REMOTE_MEDIA_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  if (!configured.length) return true;
+  const host = hostname.toLowerCase();
+  return configured.some((entry) => host === entry || host.endsWith(`.${entry}`));
 }
 
 async function validateRemoteUrl(raw: string) {
@@ -35,10 +45,26 @@ async function validateRemoteUrl(raw: string) {
   if (url.username || url.password) throw new Error('Remote media URL cannot contain credentials');
   if (url.port && url.port !== '443') throw new Error('Remote media URL cannot use a custom port');
   if (url.hostname === 'localhost' || url.hostname.endsWith('.local')) throw new Error('Local media hosts are not allowed');
+  if (!allowedHost(url.hostname)) throw new Error('Remote media host is not in REMOTE_MEDIA_ALLOWED_HOSTS');
 
   const addresses = await dns.lookup(url.hostname, { all: true, verbatim: true });
   if (!addresses.length || addresses.some((entry) => blockedIp(entry.address))) throw new Error('Remote media host resolved to a blocked network');
   return url;
+}
+
+function sizeLimitedStream(body: ReadableStream<Uint8Array>) {
+  let bytes = 0;
+  const limiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.length;
+      if (bytes > MAX_MEDIA_BYTES) {
+        callback(new Error('Remote media exceeded the 1 GB safety limit while streaming'));
+        return;
+      }
+      callback(null, chunk);
+    }
+  });
+  return Readable.fromWeb(body as never).pipe(limiter);
 }
 
 export async function openSafeRemoteMedia(rawUrl: string) {
@@ -62,7 +88,7 @@ export async function openSafeRemoteMedia(rawUrl: string) {
     if (declaredLength && declaredLength > MAX_MEDIA_BYTES) throw new Error('Remote media exceeds the 1 GB safety limit');
 
     return {
-      stream: Readable.fromWeb(response.body as never),
+      stream: sizeLimitedStream(response.body as ReadableStream<Uint8Array>),
       contentType,
       contentLength: declaredLength || null,
       finalUrl: current.toString()
