@@ -17,9 +17,11 @@ async function main() {
   const checks: Check[] = [];
 
   checks.push(check('DATABASE_URL', Boolean(process.env.DATABASE_URL), 'configured', 'missing'));
+  let databaseReady = false;
   if (process.env.DATABASE_URL) {
     try {
       await prisma.$queryRaw`SELECT 1`;
+      databaseReady = true;
       checks.push({ name: 'Database connectivity', level: 'PASS', detail: 'reachable' });
     } catch (error) {
       checks.push({ name: 'Database connectivity', level: 'FAIL', detail: error instanceof Error ? error.message.slice(0, 140) : 'unreachable' });
@@ -59,12 +61,25 @@ async function main() {
 
   const publishing = process.env.PUBLISHING_PROVIDER || 'mock';
   if (publishing === 'youtube') {
-    const status = await getYouTubeConnectionStatus().catch(() => ({ configured: false, connected: false }));
+    const oauthClientReady = Boolean(process.env.YOUTUBE_CLIENT_ID && process.env.YOUTUBE_CLIENT_SECRET && process.env.APP_BASE_URL);
     checks.push({
-      name: 'YouTube OAuth',
-      level: status.connected ? 'PASS' : 'FAIL',
-      detail: status.connected ? 'connected' : status.configured ? 'OAuth configured but channel not connected' : 'client credentials/base URL incomplete'
+      name: 'YouTube OAuth client',
+      level: oauthClientReady ? 'PASS' : 'FAIL',
+      detail: oauthClientReady ? 'client credentials + callback base URL configured' : 'client credentials/base URL incomplete'
     });
+
+    if (databaseReady) {
+      const channels = await prisma.channel.findMany({ where: { enabled: true }, orderBy: { createdAt: 'asc' } });
+      for (const channel of channels) {
+        const status = await getYouTubeConnectionStatus(channel.id).catch(() => ({ configured: false, connected: false }));
+        checks.push({
+          name: `YouTube · ${channel.name}`,
+          level: status.connected && channel.externalChannelId ? 'PASS' : 'FAIL',
+          detail: status.connected && channel.externalChannelId ? `connected as ${channel.externalChannelId}` : 'factory channel is not fully OAuth-bound'
+        });
+      }
+    }
+
     checks.push({
       name: 'YouTube upload lock',
       level: process.env.ALLOW_YOUTUBE_UPLOAD === 'true' ? 'WARN' : 'PASS',
