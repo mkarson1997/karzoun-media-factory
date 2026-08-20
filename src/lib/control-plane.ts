@@ -63,6 +63,13 @@ export async function queuePrompt(promptId: string, actor = 'dashboard') {
     });
     if (!channel) throw new Error(`No enabled ${prompt.channelType} channel is configured`);
 
+    const settings = await tx.appSettings.findUnique({ where: { id: 'singleton' } });
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentJobs = await tx.productionJob.count({ where: { createdAt: { gte: since }, status: { not: PrismaJobStatus.CANCELLED } } });
+    if (settings && recentJobs >= settings.dailyProductionLimit) {
+      throw new Error(`Daily production limit reached (${settings.dailyProductionLimit})`);
+    }
+
     const job = await tx.productionJob.create({
       data: {
         promptId: prompt.id,
@@ -120,10 +127,50 @@ export async function transitionJob(jobId: string, to: JobStatus, options?: { ac
     return { updated, externalPromptId: job.prompt.externalPromptId };
   });
 
-  if (to === 'APPROVED') {
+  if (to === 'APPROVED' && options?.source !== 'TELEGRAM') {
     await sendTelegramNotification(`✅ ${result.externalPromptId} approved and ready to schedule.`).catch(() => undefined);
   }
   return result.updated;
+}
+
+export async function requestRegeneration(jobId: string, options?: { actor?: string; source?: 'DASHBOARD' | 'TELEGRAM' }) {
+  const actor = options?.actor ?? 'system';
+  return prisma.$transaction(async (tx) => {
+    const job = await tx.productionJob.findUnique({ where: { id: jobId } });
+    if (!job) throw new Error('Production job not found');
+    if (job.status !== PrismaJobStatus.READY_FOR_REVIEW && job.status !== PrismaJobStatus.REJECTED) {
+      throw new Error('Regeneration is only available for a review or rejected job');
+    }
+
+    if (job.status === PrismaJobStatus.READY_FOR_REVIEW) {
+      assertTransition('READY_FOR_REVIEW', 'REJECTED');
+      await tx.reviewDecision.create({
+        data: {
+          jobId: job.id,
+          decision: ReviewDecisionType.REJECTED,
+          source: options?.source === 'TELEGRAM' ? ReviewSource.TELEGRAM : ReviewSource.DASHBOARD,
+          notes: 'Regeneration requested'
+        }
+      });
+    }
+    assertTransition('REJECTED', 'QUEUED');
+
+    const updated = await tx.productionJob.update({
+      where: { id: job.id },
+      data: {
+        status: PrismaJobStatus.QUEUED,
+        providerJobId: null,
+        videoUrl: null,
+        thumbnailUrl: null,
+        failureReason: null,
+        retryCount: { increment: 1 }
+      }
+    });
+    await tx.activityLog.create({
+      data: { actor, action: 'JOB_REGENERATION_REQUESTED', entityType: 'ProductionJob', entityId: job.id }
+    });
+    return updated;
+  });
 }
 
 export async function attachGeneratedMedia(jobId: string, input: { providerJobId?: string; videoUrl?: string; thumbnailUrl?: string }) {
@@ -135,6 +182,13 @@ export async function scheduleApprovedJob(jobId: string, input: { publishAt: Dat
     const job = await tx.productionJob.findUnique({ where: { id: jobId } });
     if (!job) throw new Error('Production job not found');
     assertTransition(job.status as JobStatus, 'SCHEDULED');
+
+    const settings = await tx.appSettings.findUnique({ where: { id: 'singleton' } });
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentSchedules = await tx.publishSchedule.count({ where: { createdAt: { gte: since } } });
+    if (settings && recentSchedules >= settings.dailyPublishingLimit) {
+      throw new Error(`Daily publishing limit reached (${settings.dailyPublishingLimit})`);
+    }
 
     const visibility = Visibility[input.visibility ?? 'PRIVATE'];
     const updated = await tx.productionJob.update({
