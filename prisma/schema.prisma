@@ -173,23 +173,30 @@ model PublishRecord {
 }
 
 model AnalyticsSnapshot {
-  id                      String        @id @default(cuid())
-  jobId                   String
-  views                   Int           @default(0)
-  likes                   Int           @default(0)
-  comments                Int           @default(0)
-  shares                  Int           @default(0)
-  subscribersGained       Int           @default(0)
-  averageViewDuration     Float?
-  averagePercentageViewed Float?
-  viewedVsSwipedAway      Float?
-  first24hPerformance     Float?
-  first48hPerformance     Float?
-  performanceScore        Float?
-  capturedAt              DateTime      @default(now())
-  job                     ProductionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  id                       String        @id @default(cuid())
+  jobId                    String
+  source                   String        @default("YOUTUBE_ANALYTICS")
+  views                    Int           @default(0)
+  engagedViews             Int           @default(0)
+  likes                    Int           @default(0)
+  comments                 Int           @default(0)
+  shares                   Int           @default(0)
+  subscribersGained        Int           @default(0)
+  subscribersLost          Int           @default(0)
+  averageViewDuration      Float?
+  averagePercentageViewed  Float?
+  engagedViewRate          Float?
+  interactionRate          Float?
+  subscriberConversionRate Float?
+  viewedVsSwipedAway       Float?
+  first24hPerformance      Float?
+  first48hPerformance      Float?
+  performanceScore         Float?
+  capturedAt               DateTime      @default(now())
+  job                      ProductionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, capturedAt])
+  @@index([capturedAt])
 }
 
 model ActivityLog {
