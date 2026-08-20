@@ -48,8 +48,7 @@ async function main() {
         status: JobStatus.READY_FOR_REVIEW,
         provider: 'mock-demo',
         requestedDuration: 35,
-        videoUrl: '/demo/sample-short.mp4',
-        thumbnailUrl: '/demo/sample-thumb.jpg',
+        thumbnailUrl: '/demo/sample-thumb.svg',
         title: '[DEMO] Tiny Robot Desk Reset',
         description: 'Demo data only. No real video was generated.',
         hashtags: ['#DEMO', '#Shorts']
