@@ -4,8 +4,11 @@ import { attachGeneratedMedia, transitionJob } from './lib/control-plane';
 import { getCreativeDirector, type CreativePlan } from './lib/creative-director';
 import { getPublishingProvider, getVideoGenerationProvider } from './lib/providers';
 import { createTelegramBot, notifyOperator } from './lib/telegram';
+import { syncPublishedAnalytics } from './lib/youtube-analytics';
+import { getYouTubeConnectionStatus } from './lib/youtube-auth';
 
 let stopping = false;
+let lastAnalyticsSyncAt = 0;
 
 async function prepareCreativePlan(job: { id: string; requestedDuration: number; creativeBrief: Prisma.JsonValue | null; prompt: { externalPromptId: string; category: string; concept: string; fullPrompt: string; channelType: 'GENERAL' | 'KIDS_CHANNEL_ONLY' } }) {
   if (job.creativeBrief) return job.creativeBrief as unknown as CreativePlan;
@@ -187,10 +190,35 @@ async function processOnePublishJob() {
   }
 }
 
+async function maybeSyncAnalytics() {
+  if ((process.env.PUBLISHING_PROVIDER || 'mock') !== 'youtube') return;
+
+  const intervalMinutes = Math.max(5, Number(process.env.ANALYTICS_SYNC_MINUTES || 30));
+  const intervalMs = intervalMinutes * 60_000;
+  if (Date.now() - lastAnalyticsSyncAt < intervalMs) return;
+  lastAnalyticsSyncAt = Date.now();
+
+  const connection = await getYouTubeConnectionStatus().catch(() => ({ configured: false, connected: false }));
+  if (!connection.connected) return;
+
+  const summary = await syncPublishedAnalytics({ limit: 50, minAgeMinutes: intervalMinutes }).catch((error) => ({
+    eligible: 0,
+    synced: 0,
+    skippedFresh: 0,
+    failed: 1,
+    failures: [{ jobId: 'batch', reason: error instanceof Error ? error.message : 'Analytics sync failed' }]
+  }));
+
+  if (summary.failed > 0) {
+    console.warn(`Analytics sync completed with ${summary.failed} failure(s).`);
+  }
+}
+
 async function processCycle() {
   await processOneGenerationJob();
   await notifyUpcomingSchedule();
   await processOnePublishJob();
+  await maybeSyncAnalytics();
 }
 
 async function main() {
