@@ -1,181 +1,283 @@
 # Karzoun Media Factory
 
-Private, mobile-first control plane for producing, reviewing, scheduling, publishing, and analyzing AI-generated short-form video for **Karzoun Media Lab** and future channels.
+Private, mobile-first control center for producing, reviewing, scheduling, publishing, and learning from AI-generated short-form video.
 
-## Flow
+Primary channel: **Karzoun Media Lab**.
 
-`Prompt Library → Queue → Generation → Review → Approval → Schedule → Publish → Analytics`
+Core flow:
 
-Milestone 1 deliberately runs with **mock video and mock publishing providers**. It does not spend video-generation credits and it does not upload anything to YouTube.
+`Prompt Library → Queue → Claude Creative Plan → Video Provider → Review → Approval → Schedule → YouTube → Analytics`
+
+The project is intentionally single-operator and keeps paid generation, real YouTube uploads, and public publishing behind separate safety locks.
 
 ## Stack
 
-- Next.js 15 + React 19 + TypeScript
-- PostgreSQL with Prisma
+- Next.js + React + TypeScript
+- PostgreSQL + Prisma
 - Telegram Bot API via Telegraf
-- Zod validation
-- Vitest
+- Claude/Anthropic creative-director adapter
+- OpenArt remote MCP video-provider adapter
+- Google OAuth + YouTube Data API + YouTube Analytics API
+- Zod + Vitest + ESLint
 - Docker Compose
 
-## Quick start with Docker
-
-1. Copy `.env.example` to `.env`.
-2. At minimum, set `APP_BASE_URL=http://localhost:3000`.
-3. Telegram values are optional until you want phone/bot control.
-4. Run:
+## Fast local start
 
 ```bash
+cp .env.example .env
 docker compose up -d --build
 ```
 
-The app container pushes the Prisma schema and runs the idempotent seed. Open:
+Open `http://localhost:3000/dashboard`.
 
-`http://localhost:3000/dashboard`
+The local Compose stack starts PostgreSQL, pushes the Prisma schema, seeds safe demo data, starts the web app, and starts the worker.
 
-Health check:
-
-`http://localhost:3000/api/health`
-
-Stop:
+Stop it with:
 
 ```bash
 docker compose down
 ```
 
-Database data stays in the named `kmf-postgres` volume.
+## Validation
 
-## Local development without Docker
-
-Requirements: Node.js 24+ and PostgreSQL.
+One command:
 
 ```bash
-npm install
-cp .env.example .env
-npm run db:generate
-npm run db:push
-npm run seed
-npm run dev
+npm run validate
 ```
 
-In a second terminal:
+This runs lint, TypeScript checks, tests, and a production build.
+
+Configuration/readiness check:
 
 ```bash
-npm run worker
+npm run doctor
 ```
 
-## Import the 1,000-prompt bank
+The doctor checks database reachability, operator security, Telegram pairing, Claude/OpenArt configuration, YouTube connection state, and the publishing safety locks. It does not trigger a paid video generation or a YouTube upload.
 
-Expected CSV columns:
+## Prompt bank
 
-`id, channel, category, duration_seconds, concept, prompt`
+CSV columns:
 
-Run:
+`id,channel,category,duration_seconds,concept,prompt`
+
+Import from CLI:
 
 ```bash
 npm run import:prompts -- ./data/Karzoun_Media_Lab_1000_Shorts_Prompts.csv
 ```
 
-The importer validates every row before writing anything, rejects duplicate IDs inside the file, and upserts by external prompt ID so reruns are safe.
+The `/prompts` page also supports CSV upload from a phone.
 
-Valid channel values:
+Allowed channel values:
 
 - `GENERAL`
 - `KIDS_CHANNEL_ONLY`
 
-Kids-only prompts are never automatically routed to the general channel.
+The control plane will not automatically route `KIDS_CHANNEL_ONLY` prompts to a GENERAL channel.
 
-## Telegram setup
+## Telegram control
 
-Create a Telegram bot with BotFather, then set only these server environment values:
+Configure:
 
 ```text
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_ALLOWED_USER_ID=
-APP_BASE_URL=https://your-dashboard.example
+APP_BASE_URL=https://factory.example.com
 ```
 
-The bot denies every other Telegram user. Commands:
+Only the allowlisted Telegram account is accepted.
+
+Commands:
 
 - `/start`
 - `/status`
 - `/queue`
 - `/review`
+- `/analytics`
 - `/help`
 
-Review messages include **Approve** and **Reject** buttons. The Settings screen also contains a test-notification action. Tokens are never rendered in the browser.
+Review controls include **Approve**, **Regenerate**, and **Reject**. Telegram also receives ready-for-review, failure, approval, schedule-reminder, and publishing notifications.
 
-## Mock mode
+## Claude creative director
 
-Keep:
+Safe default:
+
+```text
+CREATIVE_DIRECTOR=mock
+```
+
+Real Claude planning:
+
+```text
+CREATIVE_DIRECTOR=anthropic
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=
+```
+
+The creative director creates a structured production plan and stores it with the production job before rendering.
+
+## OpenArt MCP video generation
+
+Safe default:
 
 ```text
 VIDEO_PROVIDER=mock
+ALLOW_PAID_GENERATION=false
 ```
 
-The worker progresses mock jobs through:
+To configure the adapter:
 
-`QUEUED → GENERATING → READY_FOR_REVIEW`
+```text
+VIDEO_PROVIDER=openart-mcp
+OPENART_MCP_URL=https://mcp.openart.ai/mcp
+OPENART_MCP_ACCESS_TOKEN=
+VIDEO_MODEL_HINT=
+```
 
-After approval and scheduling it can progress:
+Real generation remains blocked until this is intentionally changed:
 
-`SCHEDULED → PUBLISHING → PUBLISHED`
+```text
+ALLOW_PAID_GENERATION=true
+```
 
-The resulting publish record is marked `MOCK_PUBLISHED`. No real YouTube request occurs.
+`VIDEO_MODEL_HINT` is optional. Leave it empty to let the rendering operator choose a currently suitable model exposed by OpenArt.
+
+`REMOTE_MEDIA_ALLOWED_HOSTS` can optionally contain a comma-separated host allowlist for generated media downloads. The downloader rejects HTTP, URL credentials, custom ports, local/private network addresses, unsafe redirects, unsupported content types, and streams larger than 1 GB.
+
+## YouTube connection
+
+Configure the Google OAuth client:
+
+```text
+YOUTUBE_CLIENT_ID=
+YOUTUBE_CLIENT_SECRET=
+APP_BASE_URL=https://factory.example.com
+APP_SECRET=<strong random secret>
+```
+
+Then use the YouTube connect action in the dashboard/settings flow. The OAuth refresh token is encrypted with `APP_SECRET` before it is stored in PostgreSQL.
+
+The requested scopes cover upload, read-only channel access, and YouTube Analytics.
+
+## Publishing safety locks
+
+Default:
+
+```text
+PUBLISHING_PROVIDER=mock
+ALLOW_YOUTUBE_UPLOAD=false
+ALLOW_PUBLIC_PUBLISHING=false
+```
+
+For the first real test, keep public publishing locked and enable only:
+
+```text
+PUBLISHING_PROVIDER=youtube
+ALLOW_YOUTUBE_UPLOAD=true
+ALLOW_PUBLIC_PUBLISHING=false
+```
+
+That forces YouTube uploads to **PRIVATE** even if a schedule accidentally requests another visibility.
+
+Only after private end-to-end verification should public publishing ever be considered:
+
+```text
+ALLOW_PUBLIC_PUBLISHING=true
+```
+
+Kids jobs pass the Made for Kids flag to YouTube automatically from their `KIDS_CHANNEL_ONLY` classification.
+
+## Analytics learning loop
+
+The worker periodically collects real metrics for videos uploaded by this factory.
+
+Default cadence:
+
+```text
+ANALYTICS_SYNC_MINUTES=30
+```
+
+The `/analytics` page also has a manual sync action.
+
+Stored metrics include:
+
+- views
+- engaged views
+- likes
+- comments
+- shares
+- subscribers gained/lost
+- average view duration
+- average percentage viewed
+- engaged-view rate
+- interaction rate
+- subscriber conversion rate
+- a transparent internal performance score
+
+The score is only for comparing this factory's own Shorts. It is not presented as YouTube's ranking algorithm.
+
+The public targeted YouTube Analytics API does not expose the YouTube Studio **viewed vs swiped away** card directly, so the factory deliberately leaves that field empty rather than fabricating a value.
 
 ## Pages
 
-- `/dashboard` factory counters, recent activity and connections
-- `/prompts` searchable prompt library and queue action
-- `/queue` production state machine controls
-- `/review` mobile video review and approval
-- `/schedule` private-default internal scheduling
-- `/analytics` real-metrics-only placeholder
-- `/settings` operational limits, channels and connection status
+- `/dashboard` control-room counters, activity, connection state
+- `/prompts` prompt library, filters, mobile CSV import, queue action
+- `/queue` production state machine and retries
+- `/review` mobile preview, creative plan, approve/regenerate/reject
+- `/schedule` private-default publishing schedule
+- `/analytics` performance cockpit and category winners
+- `/settings` limits, channels, provider state, safety interlocks
 
-## Environment variables
+## Local environment variables
 
-See `.env.example`. Never commit real values.
+See `.env.example`. Never commit `.env` or real credentials.
 
-Milestone 1 does **not** require Anthropic, OpenArt/video-provider, or YouTube credentials. Those keys remain empty until the corresponding integration milestone.
+Use an `APP_SECRET` of at least 32 random characters. In production it protects the operator session and encrypts integration secrets.
 
-## Validation
+## Production deployment
 
-Run before deployment:
+For a server using a hosted PostgreSQL/Supabase connection in `DATABASE_URL`:
 
 ```bash
-npm run lint
-npm run typecheck
-npm run test
-npm run build
-docker compose config
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-## Safe acceptance flow
+The production Compose file binds the web app to `127.0.0.1:3000`, so expose it through a TLS reverse proxy or secure tunnel rather than directly publishing the port.
 
-1. Seed or import prompts.
-2. Open `/prompts` and queue one GENERAL prompt.
-3. Let the worker move it to `READY_FOR_REVIEW`.
-4. Approve from the dashboard or Telegram.
-5. Open `/schedule`, keep visibility `PRIVATE`, and choose a time.
-6. Let the mock publisher complete the flow.
-7. Confirm Activity Log / Dashboard counters changed.
-8. Confirm no real video-provider or YouTube request occurred.
+Run before enabling real providers:
 
-## Supabase
+```bash
+npm run doctor
+```
 
-A hosted Supabase PostgreSQL database can replace the local Compose database by setting its Postgres connection string as `DATABASE_URL`. `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are reserved for later storage/auth integrations and are not required by the Milestone 1 control plane.
+## Safe first real run
+
+1. Keep `VIDEO_PROVIDER=mock` and `PUBLISHING_PROVIDER=mock` until dashboard + Telegram are working.
+2. Import the prompt bank.
+3. Queue and complete a full mock job.
+4. Configure Claude and OpenArt while `ALLOW_PAID_GENERATION=false`.
+5. Run `npm run doctor`.
+6. Unlock paid generation and create **one** real video.
+7. Review it manually from phone/Telegram.
+8. Connect YouTube OAuth.
+9. Set `PUBLISHING_PROVIDER=youtube`, `ALLOW_YOUTUBE_UPLOAD=true`, and keep `ALLOW_PUBLIC_PUBLISHING=false`.
+10. Upload **one PRIVATE test video**.
+11. Verify analytics ingestion.
+12. Only then increase production volume.
 
 ## Milestones
 
-1. **Control plane foundation**
-2. 1,000-prompt library import and production UX
-3. Claude creative-director integration
-4. Video provider / MCP integration
-5. Multi-model routing
-6. Mobile and Telegram review workflow hardening
-7. YouTube OAuth + first PRIVATE upload
-8. Scheduler + real publishing
-9. Analytics + performance scoring
-10. Security hardening + deployment
+1. ✅ Control plane foundation
+2. ✅ Prompt-bank import and production UX
+3. ✅ Claude creative director
+4. ✅ OpenArt MCP provider boundary
+5. ✅ Provider routing and safety locks
+6. ✅ Mobile + Telegram review workflow
+7. ✅ YouTube OAuth + private-first uploader
+8. ✅ Scheduler + publishing provider routing
+9. ✅ YouTube analytics + internal performance scoring
+10. 🚧 Final runtime validation and deployment activation
 
-See `SECURITY.md` before connecting any paid or publishing credential.
+See `SECURITY.md` before connecting paid or publishing credentials.
