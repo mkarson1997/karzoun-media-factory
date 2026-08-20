@@ -58,6 +58,15 @@ export class MockVideoProvider implements VideoGenerationProvider {
   async cancelJob(): Promise<void> {}
 }
 
+export async function getVideoGenerationProvider(name = process.env.VIDEO_PROVIDER || 'mock'): Promise<VideoGenerationProvider> {
+  if (name === 'mock' || name === 'mock-demo') return new MockVideoProvider();
+  if (name === 'openart-mcp') {
+    const { OpenArtMcpVideoProvider } = await import('./openart-mcp-provider');
+    return new OpenArtMcpVideoProvider();
+  }
+  throw new Error(`Unsupported video provider: ${name}`);
+}
+
 export class MockPublishingProvider implements PublishingProvider {
   async uploadVideo(input: PublishingRequest): Promise<PublishingResult> {
     return { externalVideoId: `mock-youtube-${input.jobId}`, status: 'PUBLISHED' };
