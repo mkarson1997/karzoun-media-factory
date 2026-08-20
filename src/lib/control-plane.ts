@@ -1,6 +1,7 @@
 import { JobStatus as PrismaJobStatus, ReviewDecisionType, ReviewSource, Visibility } from '@prisma/client';
 import { prisma } from './prisma';
 import { assertTransition, type JobStatus } from './job-state-machine';
+import { sendTelegramNotification } from './telegram-api';
 
 export async function getFactoryCounters() {
   const [promptCount, grouped] = await Promise.all([
@@ -81,8 +82,8 @@ export async function queuePrompt(promptId: string, actor = 'dashboard') {
 
 export async function transitionJob(jobId: string, to: JobStatus, options?: { actor?: string; source?: 'DASHBOARD' | 'TELEGRAM'; notes?: string }) {
   const actor = options?.actor ?? 'system';
-  return prisma.$transaction(async (tx) => {
-    const job = await tx.productionJob.findUnique({ where: { id: jobId } });
+  const result = await prisma.$transaction(async (tx) => {
+    const job = await tx.productionJob.findUnique({ where: { id: jobId }, include: { prompt: true } });
     if (!job) throw new Error('Production job not found');
 
     assertTransition(job.status as JobStatus, to);
@@ -116,15 +117,17 @@ export async function transitionJob(jobId: string, to: JobStatus, options?: { ac
         metadata: { from: job.status, to }
       }
     });
-    return updated;
+    return { updated, externalPromptId: job.prompt.externalPromptId };
   });
+
+  if (to === 'APPROVED') {
+    await sendTelegramNotification(`✅ ${result.externalPromptId} approved and ready to schedule.`).catch(() => undefined);
+  }
+  return result.updated;
 }
 
 export async function attachGeneratedMedia(jobId: string, input: { providerJobId?: string; videoUrl?: string; thumbnailUrl?: string }) {
-  return prisma.productionJob.update({
-    where: { id: jobId },
-    data: input
-  });
+  return prisma.productionJob.update({ where: { id: jobId }, data: input });
 }
 
 export async function scheduleApprovedJob(jobId: string, input: { publishAt: Date; timezone: string; visibility?: 'PRIVATE' | 'UNLISTED' | 'PUBLIC'; title?: string; description?: string; hashtags?: string[] }, actor = 'dashboard') {
