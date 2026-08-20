@@ -4,6 +4,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY package.json ./
+COPY prisma ./prisma
 RUN npm install --include=dev
 
 COPY . .
