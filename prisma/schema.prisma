@@ -58,6 +58,8 @@ model AppSettings {
   defaultLanguage      String   @default("en")
   dailyProductionLimit Int      @default(3)
   dailyPublishingLimit Int      @default(3)
+  productionPaused     Boolean  @default(false)
+  publishingPaused     Boolean  @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
