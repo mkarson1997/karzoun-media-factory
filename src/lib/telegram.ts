@@ -1,5 +1,5 @@
 import { Markup, Telegraf, type Context } from 'telegraf';
-import { getFactoryCounters, listJobs, transitionJob } from './control-plane';
+import { getFactoryCounters, listJobs, requestRegeneration, transitionJob } from './control-plane';
 
 function telegramConfig() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -73,8 +73,8 @@ export function createTelegramBot() {
         await ctx.reply(
           `🎬 ${job.prompt.externalPromptId} · ${job.requestedDuration}s\n${shortConcept(job.prompt.concept)}\nProvider: ${job.provider}`,
           Markup.inlineKeyboard([
-            [Markup.button.callback('✅ Approve', `approve:${job.id}`), Markup.button.callback('❌ Reject', `reject:${job.id}`)],
-            [Markup.button.url('Open Review', `${baseUrl}/review`)]
+            [Markup.button.callback('✅ Approve', `approve:${job.id}`), Markup.button.callback('🔄 Regenerate', `regenerate:${job.id}`)],
+            [Markup.button.callback('❌ Reject', `reject:${job.id}`), Markup.button.url('Open Review', `${baseUrl}/review`)]
           ])
         );
       }
@@ -84,7 +84,7 @@ export function createTelegramBot() {
   });
 
   bot.command('help', async (ctx) => {
-    await ctx.reply('/status — factory counters\n/queue — latest jobs\n/review — review and approve\n/help — commands');
+    await ctx.reply('/status — factory counters\n/queue — latest jobs\n/review — approve, regenerate or reject\n/help — commands');
   });
 
   bot.action(/^approve:(.+)$/, async (ctx) => {
@@ -99,13 +99,25 @@ export function createTelegramBot() {
     }
   });
 
+  bot.action(/^regenerate:(.+)$/, async (ctx) => {
+    try {
+      const id = ctx.match[1];
+      await requestRegeneration(id, { actor: `telegram:${allowedUserId}`, source: 'TELEGRAM' });
+      await ctx.answerCbQuery('Queued for regeneration');
+      await ctx.editMessageReplyMarkup(undefined);
+      await ctx.reply(`🔄 Job ${id} queued for regeneration.`);
+    } catch (error) {
+      await ctx.answerCbQuery(error instanceof Error ? error.message.slice(0, 180) : 'Regeneration failed', { show_alert: true });
+    }
+  });
+
   bot.action(/^reject:(.+)$/, async (ctx) => {
     try {
       const id = ctx.match[1];
       await transitionJob(id, 'REJECTED', { actor: `telegram:${allowedUserId}`, source: 'TELEGRAM' });
       await ctx.answerCbQuery('Rejected');
       await ctx.editMessageReplyMarkup(undefined);
-      await ctx.reply(`❌ Job ${id} rejected. Use the dashboard or queue to regenerate it.`);
+      await ctx.reply(`❌ Job ${id} rejected.`);
     } catch (error) {
       await ctx.answerCbQuery(error instanceof Error ? error.message.slice(0, 180) : 'Rejection failed', { show_alert: true });
     }
