@@ -1,6 +1,7 @@
 import { prisma } from '@/src/lib/prisma';
 import { SettingsForm } from '@/app/components/SettingsForm';
 import { ChannelForm } from '@/app/components/ChannelForm';
+import { ApiActionButton } from '@/app/components/ApiActionButton';
 import { getYouTubeConnectionStatus } from '@/src/lib/youtube-auth';
 
 export const dynamic = 'force-dynamic';
@@ -10,7 +11,9 @@ const defaults = {
   timezone: 'Europe/Istanbul',
   defaultLanguage: 'en',
   dailyProductionLimit: 3,
-  dailyPublishingLimit: 3
+  dailyPublishingLimit: 3,
+  productionPaused: false,
+  publishingPaused: false
 };
 
 export default async function SettingsPage() {
@@ -33,6 +36,17 @@ export default async function SettingsPage() {
         <div className="eyebrow">CONFIGURATION</div>
         <h1>Settings</h1>
         <p>Operational settings live here. Each factory channel can have its own encrypted YouTube OAuth connection.</p>
+      </section>
+
+      <section className="card">
+        <div className="section-title">Factory control</div>
+        <div className="row"><span>Production</span><span className="badge">{settings.productionPaused ? 'PAUSED' : 'RUNNING'}</span></div>
+        <div className="row"><span>Publishing</span><span className="badge">{settings.publishingPaused ? 'PAUSED' : 'RUNNING'}</span></div>
+        <div className="actions">
+          <ApiActionButton endpoint="/api/controls/pause" body={{ productionPaused: true, publishingPaused: true }} label="⏸ Pause everything" confirmText="Pause production and publishing? Existing generated files and analytics are kept." />
+          <ApiActionButton endpoint="/api/controls/pause" body={{ productionPaused: false, publishingPaused: true }} label="Pause publishing only" />
+          <ApiActionButton endpoint="/api/controls/pause" body={{ productionPaused: false, publishingPaused: false }} label="▶ Resume factory" />
+        </div>
       </section>
 
       <div className="grid two-col">
