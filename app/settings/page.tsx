@@ -1,5 +1,6 @@
 import { prisma } from '@/src/lib/prisma';
 import { SettingsForm } from '@/app/components/SettingsForm';
+import { ChannelForm } from '@/app/components/ChannelForm';
 import { getYouTubeConnectionStatus } from '@/src/lib/youtube-auth';
 
 export const dynamic = 'force-dynamic';
@@ -15,7 +16,12 @@ const defaults = {
 export default async function SettingsPage() {
   const settings = await prisma.appSettings.upsert({ where: { id: 'singleton' }, update: {}, create: { id: 'singleton' } }).catch(() => defaults);
   const channels = await prisma.channel.findMany({ orderBy: { createdAt: 'asc' } }).catch(() => []);
-  const youtube = await getYouTubeConnectionStatus().catch(() => ({ configured: false, connected: false }));
+  const channelConnections = new Map<string, { configured: boolean; connected: boolean }>();
+  await Promise.all(channels.map(async (channel) => {
+    const status = await getYouTubeConnectionStatus(channel.id).catch(() => ({ configured: false, connected: false }));
+    channelConnections.set(channel.id, status);
+  }));
+  const youtubeClientConfigured = Boolean(process.env.YOUTUBE_CLIENT_ID && process.env.YOUTUBE_CLIENT_SECRET && process.env.APP_BASE_URL);
   const openArtConfigured = Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_MODEL && process.env.OPENART_MCP_ACCESS_TOKEN);
   const paidUnlocked = process.env.ALLOW_PAID_GENERATION === 'true';
   const uploadUnlocked = process.env.ALLOW_YOUTUBE_UPLOAD === 'true';
@@ -26,7 +32,7 @@ export default async function SettingsPage() {
       <section className="hero">
         <div className="eyebrow">CONFIGURATION</div>
         <h1>Settings</h1>
-        <p>Operational settings live here. API secrets stay server-side and YouTube refresh tokens are stored encrypted when OAuth is connected.</p>
+        <p>Operational settings live here. Each factory channel can have its own encrypted YouTube OAuth connection.</p>
       </section>
 
       <div className="grid two-col">
@@ -34,10 +40,28 @@ export default async function SettingsPage() {
         <div className="grid">
           <section className="card">
             <div className="section-title">Channels</div>
-            {channels.length ? <div className="list">{channels.map((channel) => (
-              <div className="row" key={channel.id}><span>{channel.name}<small className="block muted">{channel.type} · default {channel.defaultVisibility}</small></span><span className="badge">{channel.enabled ? 'ENABLED' : 'DISABLED'}</span></div>
-            ))}</div> : <p className="muted">Run the seed command to create Karzoun Media Lab.</p>}
-            <p className="muted">Kids content requires a separate KIDS_CHANNEL_ONLY channel and cannot auto-route into the general channel.</p>
+            {channels.length ? <div className="list">{channels.map((channel) => {
+              const connection = channelConnections.get(channel.id) ?? { configured: false, connected: false };
+              return (
+                <div className="row" key={channel.id}>
+                  <span>
+                    <strong>{channel.name}</strong>
+                    <small className="block muted">{channel.type} · default {channel.defaultVisibility}</small>
+                    <small className="block muted">YouTube: {channel.externalChannelId ?? 'not bound'}</small>
+                  </span>
+                  <span className="actions">
+                    <span className="badge">{connection.connected ? 'YOUTUBE CONNECTED' : channel.enabled ? 'ENABLED' : 'DISABLED'}</span>
+                    {channel.enabled && youtubeClientConfigured ? <a className="button secondary" href={`/api/youtube/connect?channelId=${encodeURIComponent(channel.id)}`}>{connection.connected ? 'Reconnect' : 'Connect YouTube'}</a> : null}
+                  </span>
+                </div>
+              );
+            })}</div> : <p className="muted">Run the seed command to create Karzoun Media Lab.</p>}
+            <p className="muted">GENERAL and KIDS_CHANNEL_ONLY use separate channel records and separate OAuth credentials. A kids job cannot publish through the general channel binding.</p>
+          </section>
+
+          <section className="card">
+            <div className="section-title">Add channel</div>
+            <ChannelForm />
           </section>
 
           <section className="card">
@@ -46,8 +70,7 @@ export default async function SettingsPage() {
             <div className="row"><span>OpenArt MCP OAuth</span><span className="badge">{openArtConfigured ? 'CONFIGURED' : 'NOT CONNECTED'}</span></div>
             <div className="row"><span>Paid generation</span><span className="badge">{paidUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
             <div className="row"><span>Model preference</span><span className="badge">{process.env.VIDEO_MODEL_HINT || 'AUTO'}</span></div>
-            <div className="row"><span>YouTube OAuth client</span><span className="badge">{youtube.configured ? 'CONFIGURED' : 'MISSING'}</span></div>
-            <div className="row"><span>YouTube channel</span><span className="badge">{youtube.connected ? 'CONNECTED' : 'NOT CONNECTED'}</span></div>
+            <div className="row"><span>YouTube OAuth client</span><span className="badge">{youtubeClientConfigured ? 'CONFIGURED' : 'MISSING'}</span></div>
             <div className="row"><span>YouTube upload</span><span className="badge">{uploadUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
             <div className="row"><span>Public publishing</span><span className="badge">{publicUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
             <div className="row"><span>Analytics refresh</span><span className="badge">{process.env.ANALYTICS_SYNC_MINUTES || '30'} MIN</span></div>
