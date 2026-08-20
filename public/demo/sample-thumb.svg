@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920" role="img" aria-label="Karzoun Media Factory mock video placeholder">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#11182e"/><stop offset="1" stop-color="#273a78"/></linearGradient>
+  </defs>
+  <rect width="1080" height="1920" fill="url(#g)"/>
+  <circle cx="540" cy="820" r="150" fill="#eef2ff" opacity=".12"/>
+  <path d="M500 730l150 90-150 90z" fill="#eef2ff"/>
+  <text x="540" y="1100" text-anchor="middle" fill="#eef2ff" font-family="Arial,sans-serif" font-size="56" font-weight="700">MOCK PREVIEW</text>
+  <text x="540" y="1180" text-anchor="middle" fill="#b8c2ff" font-family="Arial,sans-serif" font-size="34">No paid generation was called</text>
+  <text x="540" y="1720" text-anchor="middle" fill="#8ea0ff" font-family="Arial,sans-serif" font-size="30" letter-spacing="8">KARZOUN MEDIA FACTORY</text>
+</svg>
