@@ -9,6 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "validate": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "doctor": "tsx scripts/doctor.ts",
     "worker": "tsx src/worker.ts",
     "import:prompts": "tsx scripts/import-prompts.ts",
     "seed": "tsx prisma/seed.ts",
