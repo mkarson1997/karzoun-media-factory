@@ -51,8 +51,7 @@ export class MockVideoProvider implements VideoGenerationProvider {
     return {
       providerJobId,
       status: 'READY_FOR_REVIEW',
-      videoUrl: '/demo/sample-short.mp4',
-      thumbnailUrl: '/demo/sample-thumb.jpg'
+      thumbnailUrl: '/demo/sample-thumb.svg'
     };
   }
 
