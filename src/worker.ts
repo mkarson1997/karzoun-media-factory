@@ -8,41 +8,60 @@ const publishingProvider = new MockPublishingProvider();
 let stopping = false;
 
 async function processOneGenerationJob() {
-  const queued = await prisma.productionJob.findFirst({
-    where: { status: 'QUEUED', provider: { startsWith: 'mock' } },
-    include: { prompt: true },
-    orderBy: { createdAt: 'asc' }
-  });
-
-  if (queued) {
-    try {
-      const result = await videoProvider.generateVideo({ jobId: queued.id, prompt: queued.prompt.fullPrompt, durationSeconds: queued.requestedDuration });
-      await transitionJob(queued.id, 'GENERATING', { actor: 'worker' });
-      await attachGeneratedMedia(queued.id, { providerJobId: result.providerJobId });
-    } catch (error) {
-      await transitionJob(queued.id, 'FAILED', { actor: 'worker' }).catch(() => undefined);
-      await prisma.productionJob.update({ where: { id: queued.id }, data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Mock generation failed' } }).catch(() => undefined);
-      await notifyOperator(`⚠️ Generation failed for ${queued.prompt.externalPromptId}.`).catch(() => undefined);
-    }
-    return;
-  }
-
   const generating = await prisma.productionJob.findFirst({
     where: { status: 'GENERATING', provider: { startsWith: 'mock' }, providerJobId: { not: null } },
     include: { prompt: true },
     orderBy: { updatedAt: 'asc' }
   });
 
-  if (!generating?.providerJobId) return;
+  if (generating?.providerJobId) {
+    try {
+      const result = await videoProvider.getJobStatus(generating.providerJobId);
+      if (result.status !== 'READY_FOR_REVIEW') return;
+      await attachGeneratedMedia(generating.id, { videoUrl: result.videoUrl, thumbnailUrl: result.thumbnailUrl });
+      await transitionJob(generating.id, 'READY_FOR_REVIEW', { actor: 'worker' });
+      await notifyOperator(`🎬 ${generating.prompt.externalPromptId} is ready for review.\nOpen the bot with /review or use the dashboard.`).catch(() => undefined);
+    } catch (error) {
+      await transitionJob(generating.id, 'FAILED', { actor: 'worker' }).catch(() => undefined);
+      await prisma.productionJob.update({ where: { id: generating.id }, data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Mock generation poll failed' } }).catch(() => undefined);
+      await notifyOperator(`⚠️ Generation failed for ${generating.prompt.externalPromptId}.`).catch(() => undefined);
+    }
+    return;
+  }
+
+  const queued = await prisma.productionJob.findFirst({
+    where: { status: 'QUEUED', provider: { startsWith: 'mock' } },
+    include: { prompt: true },
+    orderBy: { createdAt: 'asc' }
+  });
+  if (!queued) return;
+
   try {
-    const result = await videoProvider.getJobStatus(generating.providerJobId);
-    if (result.status !== 'READY_FOR_REVIEW') return;
-    await attachGeneratedMedia(generating.id, { videoUrl: result.videoUrl, thumbnailUrl: result.thumbnailUrl });
-    await transitionJob(generating.id, 'READY_FOR_REVIEW', { actor: 'worker' });
-    await notifyOperator(`🎬 ${generating.prompt.externalPromptId} is ready for review.\nOpen the bot with /review or use the dashboard.`).catch(() => undefined);
+    const result = await videoProvider.generateVideo({ jobId: queued.id, prompt: queued.prompt.fullPrompt, durationSeconds: queued.requestedDuration });
+    await transitionJob(queued.id, 'GENERATING', { actor: 'worker' });
+    await attachGeneratedMedia(queued.id, { providerJobId: result.providerJobId });
   } catch (error) {
-    await transitionJob(generating.id, 'FAILED', { actor: 'worker' }).catch(() => undefined);
-    await prisma.productionJob.update({ where: { id: generating.id }, data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Mock generation poll failed' } }).catch(() => undefined);
+    await transitionJob(queued.id, 'FAILED', { actor: 'worker' }).catch(() => undefined);
+    await prisma.productionJob.update({ where: { id: queued.id }, data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Mock generation failed' } }).catch(() => undefined);
+    await notifyOperator(`⚠️ Generation failed for ${queued.prompt.externalPromptId}.`).catch(() => undefined);
+  }
+}
+
+async function notifyUpcomingSchedule() {
+  const now = new Date();
+  const soon = new Date(now.getTime() + 15 * 60 * 1000);
+  const jobs = await prisma.productionJob.findMany({
+    where: { status: 'SCHEDULED', schedule: { publishAt: { gt: now, lte: soon }, status: 'PENDING' } },
+    include: { prompt: true, schedule: true },
+    take: 5
+  });
+
+  for (const job of jobs) {
+    if (!job.schedule) continue;
+    const sent = await prisma.activityLog.findFirst({ where: { action: 'SCHEDULE_REMINDER_SENT', entityType: 'ProductionJob', entityId: job.id } });
+    if (sent) continue;
+    await notifyOperator(`⏰ ${job.prompt.externalPromptId} is scheduled in less than 15 minutes.\nVisibility: ${job.schedule.visibility}`).catch(() => undefined);
+    await prisma.activityLog.create({ data: { actor: 'worker', action: 'SCHEDULE_REMINDER_SENT', entityType: 'ProductionJob', entityId: job.id } });
   }
 }
 
@@ -59,7 +78,7 @@ async function processOnePublishJob() {
     await prisma.publishSchedule.update({ where: { jobId: due.id }, data: { status: 'PROCESSING' } });
     const result = await publishingProvider.uploadVideo({
       jobId: due.id,
-      videoUrl: due.videoUrl || '/demo/sample-short.mp4',
+      videoUrl: due.videoUrl || 'mock://generated-video',
       title: due.title || due.prompt.concept.slice(0, 55),
       description: due.description || '',
       visibility: due.schedule.visibility
@@ -81,6 +100,7 @@ async function processOnePublishJob() {
 
 async function processCycle() {
   await processOneGenerationJob();
+  await notifyUpcomingSchedule();
   await processOnePublishJob();
 }
 
