@@ -21,6 +21,24 @@ function compact(value: number) {
   return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 }
 
+async function setFactoryPause(productionPaused: boolean, publishingPaused: boolean, actor: string) {
+  const settings = await prisma.appSettings.upsert({
+    where: { id: 'singleton' },
+    create: { id: 'singleton', productionPaused, publishingPaused },
+    update: { productionPaused, publishingPaused }
+  });
+  await prisma.activityLog.create({
+    data: {
+      actor,
+      action: 'FACTORY_PAUSE_STATE_CHANGED',
+      entityType: 'AppSettings',
+      entityId: settings.id,
+      metadata: { productionPaused, publishingPaused }
+    }
+  });
+  return settings;
+}
+
 export async function notifyOperator(text: string) {
   const { token, allowedUserId } = telegramConfig();
   if (!token || !allowedUserId) return false;
@@ -45,17 +63,40 @@ export function createTelegramBot() {
 
   bot.start(async (ctx) => {
     await ctx.reply(
-      '🏭 Karzoun Media Factory is online.\n\n/status — factory counters\n/queue — latest jobs\n/review — videos waiting for review\n/analytics — latest performance\n/help — commands',
+      '🏭 Karzoun Media Factory is online.\n\n/status — factory counters\n/queue — latest jobs\n/review — videos waiting for review\n/analytics — latest performance\n/pause — stop generation + publishing\n/resume — resume factory\n/help — commands',
       Markup.inlineKeyboard([[Markup.button.url('Open Dashboard', `${baseUrl}/dashboard`)]])
     );
   });
 
   bot.command('status', async (ctx) => {
     try {
-      const c = await getFactoryCounters();
-      await ctx.reply(`🏭 Factory status\n\nQueued: ${c.QUEUED}\nGenerating: ${c.GENERATING}\nReady for review: ${c.READY_FOR_REVIEW}\nApproved: ${c.APPROVED}\nScheduled: ${c.SCHEDULED}\nPublished: ${c.PUBLISHED}\nFailed: ${c.FAILED}`);
+      const [c, settings] = await Promise.all([
+        getFactoryCounters(),
+        prisma.appSettings.findUnique({ where: { id: 'singleton' } })
+      ]);
+      const production = settings?.productionPaused ? 'PAUSED' : 'RUNNING';
+      const publishing = settings?.publishingPaused ? 'PAUSED' : 'RUNNING';
+      await ctx.reply(`🏭 Factory status\n\nProduction: ${production}\nPublishing: ${publishing}\n\nQueued: ${c.QUEUED}\nGenerating: ${c.GENERATING}\nReady for review: ${c.READY_FOR_REVIEW}\nApproved: ${c.APPROVED}\nScheduled: ${c.SCHEDULED}\nPublished: ${c.PUBLISHED}\nFailed: ${c.FAILED}`);
     } catch {
       await ctx.reply('Database is not ready yet.');
+    }
+  });
+
+  bot.command('pause', async (ctx) => {
+    try {
+      await setFactoryPause(true, true, `telegram:${allowedUserId}`);
+      await ctx.reply('⏸ Factory paused. No new generation or publishing will start. Analytics can still refresh.', Markup.inlineKeyboard([[Markup.button.url('Open Settings', `${baseUrl}/settings`)]]));
+    } catch {
+      await ctx.reply('Could not pause the factory.');
+    }
+  });
+
+  bot.command('resume', async (ctx) => {
+    try {
+      await setFactoryPause(false, false, `telegram:${allowedUserId}`);
+      await ctx.reply('▶️ Factory resumed. Production and publishing workers may continue.');
+    } catch {
+      await ctx.reply('Could not resume the factory.');
     }
   });
 
@@ -117,7 +158,7 @@ export function createTelegramBot() {
   });
 
   bot.command('help', async (ctx) => {
-    await ctx.reply('/status — factory counters\n/queue — latest jobs\n/review — approve, regenerate or reject\n/analytics — latest performance\n/help — commands');
+    await ctx.reply('/status — factory counters and pause state\n/queue — latest jobs\n/review — approve, regenerate or reject\n/analytics — latest performance\n/pause — pause generation + publishing\n/resume — resume factory\n/help — commands');
   });
 
   bot.action(/^approve:(.+)$/, async (ctx) => {
