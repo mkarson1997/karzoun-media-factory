@@ -3,6 +3,7 @@ import { SettingsForm } from '@/app/components/SettingsForm';
 import { ChannelForm } from '@/app/components/ChannelForm';
 import { ApiActionButton } from '@/app/components/ApiActionButton';
 import { getYouTubeConnectionStatus } from '@/src/lib/youtube-auth';
+import { getAutopilotStatus } from '@/src/lib/autopilot';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,12 +14,17 @@ const defaults = {
   dailyProductionLimit: 3,
   dailyPublishingLimit: 3,
   productionPaused: false,
-  publishingPaused: false
+  publishingPaused: false,
+  autopilotEnabled: false,
+  autopilotGeneralDailyTarget: 2,
+  autopilotKidsEnabled: false,
+  autopilotKidsDailyTarget: 0
 };
 
 export default async function SettingsPage() {
   const settings = await prisma.appSettings.upsert({ where: { id: 'singleton' }, update: {}, create: { id: 'singleton' } }).catch(() => defaults);
   const channels = await prisma.channel.findMany({ orderBy: { createdAt: 'asc' } }).catch(() => []);
+  const autopilot = await getAutopilotStatus().catch(() => null);
   const channelConnections = new Map<string, { configured: boolean; connected: boolean }>();
   await Promise.all(channels.map(async (channel) => {
     const status = await getYouTubeConnectionStatus(channel.id).catch(() => ({ configured: false, connected: false }));
@@ -42,6 +48,9 @@ export default async function SettingsPage() {
         <div className="section-title">Factory control</div>
         <div className="row"><span>Production</span><span className="badge">{settings.productionPaused ? 'PAUSED' : 'RUNNING'}</span></div>
         <div className="row"><span>Publishing</span><span className="badge">{settings.publishingPaused ? 'PAUSED' : 'RUNNING'}</span></div>
+        <div className="row"><span>Autopilot</span><span className="badge">{settings.autopilotEnabled ? 'ARMED' : 'OFF'}</span></div>
+        {autopilot ? <div className="row"><span>Autopilot rolling 24h<small className="block muted">Unused bank: {autopilot.unused.general} general · {autopilot.unused.kids} kids</small></span><span className="badge">{autopilot.rolling24h.generalQueued}/{autopilot.rolling24h.generalTarget} GENERAL</span></div> : null}
+        {autopilot?.safetyBlock ? <div className="notice">{autopilot.safetyBlock}</div> : null}
         <div className="actions">
           <ApiActionButton endpoint="/api/controls/pause" body={{ productionPaused: true, publishingPaused: true }} label="⏸ Pause everything" confirmText="Pause production and publishing? Existing generated files and analytics are kept." />
           <ApiActionButton endpoint="/api/controls/pause" body={{ productionPaused: false, publishingPaused: true }} label="Pause publishing only" />
@@ -94,7 +103,7 @@ export default async function SettingsPage() {
 
           <section className="card">
             <div className="section-title">Safety interlocks</div>
-            <p className="muted">Provider credentials can be configured while real spending and publishing remain locked. Unlock paid generation, YouTube upload, and public publishing separately only when that exact action is intended.</p>
+            <p className="muted">Autopilot can choose and queue ideas, but it cannot auto-approve review, bypass paid-generation locks, or bypass YouTube publishing locks.</p>
           </section>
         </div>
       </div>
