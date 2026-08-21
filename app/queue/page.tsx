@@ -13,8 +13,8 @@ export default async function QueuePage() {
       <section className="hero">
         <div className="eyebrow">PRODUCTION</div>
         <h1>Queue</h1>
-        <p>Every job follows the validated state machine. Real paid generation remains off until the mock workflow passes.</p>
-        <div className="hero-actions"><a className="button" href="/prompts">Queue another prompt</a></div>
+        <p>Manual and autopilot jobs share the same validated state machine, review gate, limits and provider safety locks.</p>
+        <div className="hero-actions"><a className="button" href="/prompts">Queue another prompt</a><a className="button secondary" href="/dashboard">Autopilot controls</a></div>
       </section>
 
       {!databaseReady ? <div className="notice">Database is not configured.</div> : null}
@@ -25,7 +25,7 @@ export default async function QueuePage() {
           <article className="job-card" key={job.id}>
             <div className="prompt-head">
               <div><strong>{job.prompt.externalPromptId}</strong><small className="block muted">{job.prompt.category} · {job.requestedDuration}s · {job.channel.name}</small></div>
-              <span className="badge">{job.status}</span>
+              <span className="actions"><span className="badge">{job.origin === 'AUTOPILOT' ? '🤖 AUTO' : 'MANUAL'}</span><span className="badge">{job.status}</span></span>
             </div>
             <p>{job.prompt.concept}</p>
             <div className="actions">
