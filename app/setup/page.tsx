@@ -23,6 +23,8 @@ export default async function SetupPage() {
   const report = await getActivationReport();
   const telegramConfigured = report.checks.find((item) => item.id === 'telegram')?.state === 'PASS';
   const promptBankInstalled = report.counts.generalPrompts > 0;
+  const generalChannelExists = report.channels.some((channel) => channel.enabled && channel.type === 'GENERAL');
+  const coreInstalled = promptBankInstalled && generalChannelExists;
   const youtubeClientReady = report.checks.find((item) => item.id === 'youtube-client')?.state === 'PASS';
 
   return (
@@ -53,14 +55,14 @@ export default async function SetupPage() {
         <div className="card">
           <div className="section-title">Quick actions</div>
           <div className="activation-actions">
-            {!promptBankInstalled ? (
+            {!coreInstalled ? (
               <ApiActionButton
-                endpoint="/api/prompts/bootstrap"
+                endpoint="/api/setup/bootstrap"
                 body={{}}
-                label="✨ Install 1,000 prompts"
-                confirmText="Install or refresh the built-in 1,000-prompt bank?"
+                label="🚀 Prepare safe factory"
+                confirmText="Create the safe GENERAL channel if missing and install/refresh the built-in 1,000-prompt bank? No paid service or YouTube upload will be called."
               />
-            ) : <span className="badge">PROMPT BANK READY</span>}
+            ) : <span className="badge">CORE + 1,000 PROMPTS READY</span>}
 
             {telegramConfigured
               ? <ApiActionButton endpoint="/api/telegram/test" body={{}} label="📨 Test Telegram" />
@@ -88,7 +90,7 @@ export default async function SetupPage() {
                 ) : null}
               </span>
             </div>
-          ))}</div> : <p className="muted">No channel records yet. Open Settings or run the seed step first.</p>}
+          ))}</div> : <p className="muted">No channel records yet. Use “Prepare safe factory” first.</p>}
         </div>
       </section>
 
