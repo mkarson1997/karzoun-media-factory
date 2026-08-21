@@ -11,6 +11,7 @@
     "test": "vitest run",
     "validate": "npm run lint && npm run typecheck && npm run test && npm run build",
     "doctor": "tsx scripts/doctor.ts",
+    "smoke:mock": "tsx scripts/smoke-mock.ts",
     "worker": "tsx src/worker.ts",
     "prompts:generate": "tsx scripts/generate-prompt-bank.ts",
     "prompts:bootstrap": "npm run prompts:generate && npm run import:prompts -- ./data/Karzoun_Media_Lab_1000_Shorts_Prompts.csv",
