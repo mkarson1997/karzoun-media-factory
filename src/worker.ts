@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from './lib/prisma';
+import { runAutopilotTick } from './lib/autopilot';
 import { attachGeneratedMedia, claimJobTransition, transitionJob } from './lib/control-plane';
 import { getCreativeDirector, type CreativePlan } from './lib/creative-director';
 import { evaluateCreativeQuality } from './lib/creative-quality';
@@ -9,6 +10,7 @@ import { syncPublishedAnalytics } from './lib/youtube-analytics';
 
 let stopping = false;
 let lastAnalyticsSyncAt = 0;
+let lastAutopilotTickAt = 0;
 
 async function prepareCreativePlan(job: { id: string; requestedDuration: number; creativeBrief: Prisma.JsonValue | null; prompt: { externalPromptId: string; category: string; concept: string; fullPrompt: string; channelType: 'GENERAL' | 'KIDS_CHANNEL_ONLY' } }) {
   if (job.creativeBrief) return job.creativeBrief as unknown as CreativePlan;
@@ -146,6 +148,17 @@ async function processOneGenerationJob() {
   await startOneGeneration();
 }
 
+async function maybeRunAutopilot() {
+  if (Date.now() - lastAutopilotTickAt < 60_000) return;
+  lastAutopilotTickAt = Date.now();
+  const result = await runAutopilotTick();
+  if (result.status === 'queued') {
+    await notifyOperator(
+      `🤖 Autopilot queued ${result.externalPromptId}.\nCategory: ${result.category}\nChannel: ${result.channelType}\nSelection score: ${result.selectionScore}\n\nIt still requires your review before publishing.`
+    ).catch(() => undefined);
+  }
+}
+
 async function notifyUpcomingSchedule() {
   const now = new Date();
   const soon = new Date(now.getTime() + 15 * 60 * 1000);
@@ -242,7 +255,10 @@ async function maybeSyncAnalytics() {
 
 async function processCycle() {
   const settings = await prisma.appSettings.findUnique({ where: { id: 'singleton' } });
-  if (!settings?.productionPaused) await processOneGenerationJob();
+  if (!settings?.productionPaused) {
+    await maybeRunAutopilot();
+    await processOneGenerationJob();
+  }
   if (!settings?.publishingPaused) {
     await notifyUpcomingSchedule();
     await processOnePublishJob();
