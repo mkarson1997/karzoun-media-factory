@@ -20,10 +20,25 @@ export default async function PromptsPage({ searchParams }: { searchParams: Prom
       <section className="hero">
         <div className="eyebrow">LIBRARY</div>
         <h1>Prompt Library</h1>
-        <p>Upload the idea bank from your phone, search it, and send selected concepts into production. Kids-only prompts stay isolated from the general channel.</p>
+        <p>Install the built-in 1,000-Short idea bank with one tap, upload another CSV from your phone, or search and queue individual concepts. Kids-only prompts stay isolated from the general channel.</p>
       </section>
 
-      {databaseReady ? <PromptImportForm /> : <div className="notice">Database is not ready. Configure it before importing the 1,000-prompt CSV.</div>}
+      {databaseReady ? (
+        <section className="card">
+          <div className="section-title">Built-in 1,000-prompt bank</div>
+          <p className="muted">650 general entertainment prompts + 350 kids-only prompts. Every brief targets 30–59 seconds, vertical 9:16, original imagery, continuity, captions/sound design and a loopable ending. Reinstalling is safe because IDs are upserted.</p>
+          <div className="actions">
+            <ApiActionButton
+              endpoint="/api/prompts/bootstrap"
+              body={{}}
+              label="✨ Install 1,000 prompts"
+              confirmText="Install or refresh the built-in 1,000-prompt bank? Existing matching prompt IDs will be updated, not duplicated."
+            />
+          </div>
+        </section>
+      ) : <div className="notice">Database is not ready. Configure it before importing prompts.</div>}
+
+      {databaseReady ? <PromptImportForm /> : null}
 
       <form className="card filter-bar" method="get">
         <input className="input" name="q" defaultValue={params.q} placeholder="Search ID, category or concept" />
@@ -49,7 +64,7 @@ export default async function PromptsPage({ searchParams }: { searchParams: Prom
               <details><summary className="button secondary">View prompt</summary><pre className="prompt-text">{prompt.fullPrompt}</pre></details>
             </div>
           </article>
-        ))}</div> : <p className="muted">No prompts yet. Upload the CSV bank above.</p>}
+        ))}</div> : <p className="muted">No prompts yet. Install the built-in bank above or upload a compatible CSV.</p>}
       </section>
     </div>
   );
