@@ -33,6 +33,7 @@ export default async function SettingsPage() {
   const youtubeClientConfigured = Boolean(process.env.YOUTUBE_CLIENT_ID && process.env.YOUTUBE_CLIENT_SECRET && process.env.APP_BASE_URL);
   const openArtConfigured = Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_MODEL && process.env.OPENART_MCP_ACCESS_TOKEN);
   const paidUnlocked = process.env.ALLOW_PAID_GENERATION === 'true';
+  const autopilotPaidUnlocked = process.env.ALLOW_AUTOPILOT_PAID_GENERATION === 'true';
   const uploadUnlocked = process.env.ALLOW_YOUTUBE_UPLOAD === 'true';
   const publicUnlocked = process.env.ALLOW_PUBLIC_PUBLISHING === 'true';
 
@@ -92,6 +93,7 @@ export default async function SettingsPage() {
             <div className="row"><span>Video generation</span><span className="badge">{(process.env.VIDEO_PROVIDER || 'mock').toUpperCase()}</span></div>
             <div className="row"><span>OpenArt MCP OAuth</span><span className="badge">{openArtConfigured ? 'CONFIGURED' : 'NOT CONNECTED'}</span></div>
             <div className="row"><span>Paid generation</span><span className="badge">{paidUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
+            <div className="row"><span>Autopilot paid generation</span><span className="badge">{autopilotPaidUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
             <div className="row"><span>Model preference</span><span className="badge">{process.env.VIDEO_MODEL_HINT || 'AUTO'}</span></div>
             <div className="row"><span>YouTube OAuth client</span><span className="badge">{youtubeClientConfigured ? 'CONFIGURED' : 'MISSING'}</span></div>
             <div className="row"><span>YouTube upload</span><span className="badge">{uploadUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
@@ -103,7 +105,7 @@ export default async function SettingsPage() {
 
           <section className="card">
             <div className="section-title">Safety interlocks</div>
-            <p className="muted">Autopilot can choose and queue ideas, but it cannot auto-approve review, bypass paid-generation locks, or bypass YouTube publishing locks.</p>
+            <p className="muted">Autopilot can choose and queue ideas, but it cannot auto-approve review, bypass the separate automatic-spending lock, or bypass YouTube publishing locks.</p>
           </section>
         </div>
       </div>
