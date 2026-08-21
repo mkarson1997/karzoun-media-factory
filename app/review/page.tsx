@@ -13,7 +13,7 @@ export default async function ReviewPage() {
       <section className="hero">
         <div className="eyebrow">QUALITY GATE</div>
         <h1>Review</h1>
-        <p>Nothing publishes automatically here. Inspect the creative plan and generated result, then approve, regenerate, or reject it.</p>
+        <p>Inspect the generated result, then approve and smart-schedule it in one tap, approve without scheduling, regenerate, or reject it. Publishing safety locks still apply.</p>
       </section>
 
       {!databaseReady ? <div className="notice">Database is not configured.</div> : null}
@@ -32,7 +32,8 @@ export default async function ReviewPage() {
             <div className="row"><span>Creative director</span><span className="badge">{job.creativeModel ?? 'NOT PREPARED'}</span></div>
             {job.creativeBrief ? <details><summary className="button secondary">Creative plan</summary><pre className="prompt-text">{JSON.stringify(job.creativeBrief, null, 2)}</pre></details> : null}
             <div className="actions">
-              <ApiActionButton endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'APPROVED' }} label="✓ Approve" />
+              <ApiActionButton endpoint={`/api/jobs/${job.id}/approve-smart`} body={{}} label="✓ Approve + smart schedule" />
+              <ApiActionButton endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'APPROVED' }} label="Approve only" className="button secondary" />
               <ApiActionButton endpoint={`/api/jobs/${job.id}/regenerate`} body={{}} label="↻ Regenerate" className="button secondary" />
               <ApiActionButton className="button danger" endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'REJECTED' }} label="Reject" />
             </div>
