@@ -3,11 +3,20 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-export function ScheduleForm({ jobId, defaultTitle = '', defaultDescription = '', defaultTimezone = 'Europe/Istanbul' }: {
+export function ScheduleForm({
+  jobId,
+  defaultTitle = '',
+  defaultDescription = '',
+  defaultTimezone = 'Europe/Istanbul',
+  defaultPublishLocal = '',
+  suggestionReason
+}: {
   jobId: string;
   defaultTitle?: string;
   defaultDescription?: string;
   defaultTimezone?: string;
+  defaultPublishLocal?: string;
+  suggestionReason?: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -17,16 +26,15 @@ export function ScheduleForm({ jobId, defaultTitle = '', defaultDescription = ''
     setBusy(true);
     setMessage(null);
     try {
-      const localDate = String(formData.get('publishAt'));
-      const date = new Date(localDate);
-      if (Number.isNaN(date.getTime())) throw new Error('Choose a valid publish date and time');
+      const publishLocal = String(formData.get('publishAt'));
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(publishLocal)) throw new Error('Choose a valid publish date and time');
       const hashtags = String(formData.get('hashtags') || '').split(/[\s,]+/).map((v) => v.trim()).filter(Boolean);
       const response = await fetch('/api/schedules', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           jobId,
-          publishAt: date.toISOString(),
+          publishLocal,
           timezone: String(formData.get('timezone')),
           visibility: String(formData.get('visibility')),
           title: String(formData.get('title') || ''),
@@ -36,7 +44,7 @@ export function ScheduleForm({ jobId, defaultTitle = '', defaultDescription = ''
       });
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw new Error(payload.error || 'Scheduling failed');
-      setMessage('Scheduled in the internal queue. Real YouTube publishing is still disabled.');
+      setMessage('Scheduled. Publishing safety locks still apply.');
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Scheduling failed');
@@ -47,7 +55,8 @@ export function ScheduleForm({ jobId, defaultTitle = '', defaultDescription = ''
 
   return (
     <form className="card form-stack" action={submit}>
-      <label>Publish date & time<input className="input" type="datetime-local" name="publishAt" required /></label>
+      {suggestionReason ? <div className="notice"><strong>Smart suggestion</strong><br/>{suggestionReason}</div> : null}
+      <label>Publish date & time<input className="input" type="datetime-local" name="publishAt" defaultValue={defaultPublishLocal} required /></label>
       <label>Timezone<input className="input" name="timezone" defaultValue={defaultTimezone} required /></label>
       <label>Visibility<select className="input" name="visibility" defaultValue="PRIVATE"><option>PRIVATE</option><option>UNLISTED</option><option>PUBLIC</option></select></label>
       <label>Title<input className="input" name="title" maxLength={100} defaultValue={defaultTitle} /></label>
