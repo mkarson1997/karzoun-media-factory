@@ -5,6 +5,15 @@ import { assertSameOriginMutation, safeError } from '@/src/lib/http-security';
 
 export const dynamic = 'force-dynamic';
 
+function validTimezone(value: string) {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: value }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const settingsSchema = z.object({
   projectName: z.string().trim().min(1).max(80),
   timezone: z.string().trim().min(1).max(80),
@@ -16,6 +25,10 @@ const settingsSchema = z.object({
   autopilotKidsEnabled: z.boolean(),
   autopilotKidsDailyTarget: z.number().int().min(0).max(20)
 }).superRefine((value, ctx) => {
+  if (!validTimezone(value.timezone)) {
+    ctx.addIssue({ code: 'custom', path: ['timezone'], message: 'Timezone must be a valid IANA timezone such as Europe/Istanbul' });
+  }
+
   const autopilotTarget = value.autopilotGeneralDailyTarget + (value.autopilotKidsEnabled ? value.autopilotKidsDailyTarget : 0);
   if (value.autopilotEnabled && autopilotTarget > value.dailyProductionLimit) {
     ctx.addIssue({
