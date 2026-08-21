@@ -49,11 +49,16 @@ describe('runtime readiness', () => {
     expect(readinessSummary(checks).ready).toBe(true);
   });
 
-  it('requires HTTPS and a strong APP_SECRET in production', () => {
-    const checks = evaluateRuntimeSafety({ ...base, APP_BASE_URL: 'http://localhost:3000', APP_SECRET: 'short' });
+  it('requires a secure public URL and a strong APP_SECRET in production', () => {
+    const checks = evaluateRuntimeSafety({ ...base, APP_BASE_URL: 'http://factory.example.com', APP_SECRET: 'short' });
     const summary = readinessSummary(checks);
     expect(summary.ready).toBe(false);
     expect(summary.blocking.map((item) => item.name)).toEqual(expect.arrayContaining(['APP_SECRET', 'APP_BASE_URL']));
+  });
+
+  it('allows HTTP only for loopback local operation', () => {
+    const checks = evaluateRuntimeSafety({ ...base, APP_BASE_URL: 'http://localhost:3000' });
+    expect(readinessSummary(checks).ready).toBe(true);
   });
 
   it('rejects half-configured Telegram control', () => {
