@@ -1,4 +1,5 @@
 import { prisma } from '../src/lib/prisma';
+import { getAutopilotStatus } from '../src/lib/autopilot';
 import { getYouTubeConnectionStatus } from '../src/lib/youtube-auth';
 import { openArtMcpStatus } from '../src/lib/openart-mcp-provider';
 
@@ -57,6 +58,38 @@ async function main() {
     });
   } else {
     checks.push({ name: 'Video provider', level: 'WARN', detail: `provider=${videoProvider}; no paid generation expected` });
+  }
+
+  if (databaseReady) {
+    try {
+      const autopilot = await getAutopilotStatus();
+      const configuredTarget = autopilot.rolling24h.generalTarget + (autopilot.kidsEnabled ? autopilot.rolling24h.kidsTarget : 0);
+      checks.push({
+        name: 'Autopilot',
+        level: autopilot.enabled ? (autopilot.safetyBlock ? 'WARN' : 'PASS') : 'WARN',
+        detail: autopilot.enabled ? (autopilot.safetyBlock || `armed; target=${configuredTarget}/${autopilot.rolling24h.globalLimit} per rolling 24h`) : 'disabled by default'
+      });
+      checks.push({
+        name: 'Autopilot production ceiling',
+        level: configuredTarget <= autopilot.rolling24h.globalLimit ? 'PASS' : 'FAIL',
+        detail: `target=${configuredTarget}; global daily limit=${autopilot.rolling24h.globalLimit}`
+      });
+      checks.push({
+        name: 'Autopilot prompt bank',
+        level: autopilot.unused.general > 0 ? 'PASS' : 'WARN',
+        detail: `${autopilot.unused.general} unused GENERAL; ${autopilot.unused.kids} unused KIDS prompts`
+      });
+      if (autopilot.kidsEnabled) {
+        const kidsChannel = await prisma.channel.findFirst({ where: { enabled: true, type: 'KIDS_CHANNEL_ONLY' } });
+        checks.push({
+          name: 'Kids autopilot channel',
+          level: kidsChannel ? 'PASS' : 'WARN',
+          detail: kidsChannel ? `ready: ${kidsChannel.name}` : 'kids autopilot enabled but no active KIDS_CHANNEL_ONLY channel exists'
+        });
+      }
+    } catch (error) {
+      checks.push({ name: 'Autopilot', level: 'WARN', detail: error instanceof Error ? error.message.slice(0, 140) : 'status unavailable' });
+    }
   }
 
   const publishing = process.env.PUBLISHING_PROVIDER || 'mock';
