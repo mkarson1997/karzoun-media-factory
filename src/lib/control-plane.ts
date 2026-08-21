@@ -57,8 +57,6 @@ export async function listJobs(input?: { status?: PrismaJobStatus; take?: number
 
 export async function queuePrompt(promptId: string, actor = 'dashboard') {
   return prisma.$transaction(async (tx) => {
-    // Shared with Autopilot so manual taps and the background worker cannot race
-    // the same global daily production limit.
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(${PRODUCTION_QUEUE_LOCK_ID})`;
 
     const prompt = await tx.prompt.findUnique({ where: { id: promptId } });
@@ -140,16 +138,12 @@ export async function transitionJob(jobId: string, to: JobStatus, options?: { ac
     return { updated, externalPromptId: job.prompt.externalPromptId };
   });
 
-  if (to === 'APPROVED' && options?.source !== 'TELEGRAM') {
+  if (to === 'APPROVED' && options?.source !== 'TELEGRAM' && actor !== 'smoke-test') {
     await sendTelegramNotification(`✅ ${result.externalPromptId} approved and ready to schedule.`).catch(() => undefined);
   }
   return result.updated;
 }
 
-/**
- * Atomically claims a worker transition. If another worker/process already
- * changed the status, this returns false without mutating the job.
- */
 export async function claimJobTransition(jobId: string, from: JobStatus, to: JobStatus, actor = 'worker') {
   assertTransition(from, to);
   return prisma.$transaction(async (tx) => {
