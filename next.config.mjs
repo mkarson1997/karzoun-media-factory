@@ -30,9 +30,7 @@ const securityHeaders = [
 const nextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
-  experimental: {
-    typedRoutes: false
-  },
+  typedRoutes: false,
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
   }
