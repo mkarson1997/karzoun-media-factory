@@ -1,5 +1,6 @@
 import { google, type youtube_v3 } from 'googleapis';
 import type { PublishingProvider, PublishingRequest, PublishingResult } from './providers';
+import { assertRuntimePublishingCapacity } from './publishing-guard';
 import { openSafeRemoteMedia } from './remote-media';
 import { getAuthorizedYouTubeClient } from './youtube-auth';
 import { prisma } from './prisma';
@@ -64,6 +65,7 @@ async function insertVideo(youtube: youtube_v3.Youtube, input: PublishingRequest
 export class YouTubePublishingProvider implements PublishingProvider {
   async uploadVideo(input: PublishingRequest): Promise<PublishingResult> {
     uploadsUnlocked();
+    await assertRuntimePublishingCapacity();
     const visibility = normalizedVisibility(input.visibility);
     const youtube = await channelClient(input.factoryChannelId);
     const response = await insertVideo(youtube, input, visibility);
@@ -74,9 +76,19 @@ export class YouTubePublishingProvider implements PublishingProvider {
 
   async scheduleVideo(input: PublishingRequest): Promise<PublishingResult> {
     uploadsUnlocked();
-    if (!input.publishAt) return this.uploadVideo(input);
+    await assertRuntimePublishingCapacity();
+    if (!input.publishAt) {
+      const visibility = normalizedVisibility(input.visibility);
+      const youtube = await channelClient(input.factoryChannelId);
+      const response = await insertVideo(youtube, input, visibility);
+      if (!response.data.id) throw new Error('YouTube upload completed without a video ID');
+      return { externalVideoId: response.data.id, status: 'PUBLISHED', visibility };
+    }
     if (process.env.ALLOW_PUBLIC_PUBLISHING !== 'true' || input.visibility !== 'PUBLIC') {
-      return this.uploadVideo({ ...input, visibility: 'PRIVATE' });
+      const youtube = await channelClient(input.factoryChannelId);
+      const response = await insertVideo(youtube, { ...input, visibility: 'PRIVATE' }, 'PRIVATE');
+      if (!response.data.id) throw new Error('YouTube upload completed without a video ID');
+      return { externalVideoId: response.data.id, status: 'PUBLISHED', visibility: 'PRIVATE' };
     }
 
     const youtube = await channelClient(input.factoryChannelId);
