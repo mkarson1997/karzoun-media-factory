@@ -16,7 +16,8 @@ const settingsSchema = z.object({
   autopilotKidsEnabled: z.boolean(),
   autopilotKidsDailyTarget: z.number().int().min(0).max(20)
 }).superRefine((value, ctx) => {
-  if (value.autopilotGeneralDailyTarget + (value.autopilotKidsEnabled ? value.autopilotKidsDailyTarget : 0) > value.dailyProductionLimit) {
+  const autopilotTarget = value.autopilotGeneralDailyTarget + (value.autopilotKidsEnabled ? value.autopilotKidsDailyTarget : 0);
+  if (value.autopilotEnabled && autopilotTarget > value.dailyProductionLimit) {
     ctx.addIssue({
       code: 'custom',
       path: ['dailyProductionLimit'],
@@ -52,6 +53,7 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ ok: true, settings });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: safeError(error) }, { status: 400 });
+    const message = error instanceof z.ZodError ? error.issues[0]?.message ?? 'Invalid settings' : safeError(error);
+    return NextResponse.json({ ok: false, error: message }, { status: 400 });
   }
 }
