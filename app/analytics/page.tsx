@@ -68,7 +68,7 @@ export default async function AnalyticsPage() {
       </section>
 
       <div className="notice">
-        YouTube's public targeted Analytics API exposes <strong>engagedViews</strong>, but it does not expose the Studio "viewed vs swiped away" card directly. The factory keeps that field empty instead of inventing it.
+        YouTube&apos;s public targeted Analytics API exposes <strong>engagedViews</strong>, but it does not expose the Studio &quot;viewed vs swiped away&quot; card directly. The factory keeps that field empty instead of inventing it.
       </div>
 
       <section className="grid two-col">
