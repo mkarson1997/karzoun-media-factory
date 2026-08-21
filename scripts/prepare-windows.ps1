@@ -21,14 +21,6 @@ function New-HexSecret([int]$Bytes = 32) {
     return ([System.BitConverter]::ToString($buffer)).Replace('-', '').ToLowerInvariant()
 }
 
-function Read-DotEnvLines([string]$Path) {
-    $lines = New-Object 'System.Collections.Generic.List[string]'
-    if (Test-Path $Path) {
-        foreach ($line in Get-Content $Path) { [void]$lines.Add([string]$line) }
-    }
-    return $lines
-}
-
 function Get-DotEnvValue([string]$Path, [string]$Key) {
     if (-not (Test-Path $Path)) { return $null }
     $prefix = "$Key="
@@ -41,7 +33,16 @@ function Get-DotEnvValue([string]$Path, [string]$Key) {
 }
 
 function Set-DotEnvValue([string]$Path, [string]$Key, [string]$Value, [switch]$OnlyIfBlank) {
-    $lines = Read-DotEnvLines $Path
+    # Build a fresh mutable List every time. Returning a List from a PowerShell
+    # function can be pipeline-enumerated into a fixed-size Object[] on Windows,
+    # which makes .Add() fail with "Collection was of a fixed size."
+    $lines = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path $Path) {
+        foreach ($line in Get-Content $Path) {
+            [void]$lines.Add([string]$line)
+        }
+    }
+
     $index = -1
     for ($i = 0; $i -lt $lines.Count; $i++) {
         if ($lines[$i] -match ('^' + [regex]::Escape($Key) + '=')) { $index = $i; break }
@@ -54,6 +55,7 @@ function Set-DotEnvValue([string]$Path, [string]$Key, [string]$Value, [switch]$O
     } else {
         [void]$lines.Add("$Key=$Value")
     }
+
     Set-Content -Path $Path -Value $lines -Encoding UTF8
 }
 
