@@ -4,7 +4,19 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ApiActionButton } from './ApiActionButton';
 
-export function SettingsForm({ settings }: { settings: { projectName: string; timezone: string; defaultLanguage: string; dailyProductionLimit: number; dailyPublishingLimit: number } }) {
+type Settings = {
+  projectName: string;
+  timezone: string;
+  defaultLanguage: string;
+  dailyProductionLimit: number;
+  dailyPublishingLimit: number;
+  autopilotEnabled: boolean;
+  autopilotGeneralDailyTarget: number;
+  autopilotKidsEnabled: boolean;
+  autopilotKidsDailyTarget: number;
+};
+
+export function SettingsForm({ settings }: { settings: Settings }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -21,7 +33,11 @@ export function SettingsForm({ settings }: { settings: { projectName: string; ti
           timezone: String(formData.get('timezone')),
           defaultLanguage: String(formData.get('defaultLanguage')),
           dailyProductionLimit: Number(formData.get('dailyProductionLimit')),
-          dailyPublishingLimit: Number(formData.get('dailyPublishingLimit'))
+          dailyPublishingLimit: Number(formData.get('dailyPublishingLimit')),
+          autopilotEnabled: formData.get('autopilotEnabled') === 'on',
+          autopilotGeneralDailyTarget: Number(formData.get('autopilotGeneralDailyTarget')),
+          autopilotKidsEnabled: formData.get('autopilotKidsEnabled') === 'on',
+          autopilotKidsDailyTarget: Number(formData.get('autopilotKidsDailyTarget'))
         })
       });
       const payload = await response.json();
@@ -44,6 +60,14 @@ export function SettingsForm({ settings }: { settings: { projectName: string; ti
         <label>Default language<input className="input" name="defaultLanguage" defaultValue={settings.defaultLanguage} /></label>
         <label>Daily production limit<input className="input" type="number" min="1" max="50" name="dailyProductionLimit" defaultValue={settings.dailyProductionLimit} /></label>
         <label>Daily publishing limit<input className="input" type="number" min="1" max="20" name="dailyPublishingLimit" defaultValue={settings.dailyPublishingLimit} /></label>
+
+        <div className="section-title">Autopilot</div>
+        <p className="muted">Autopilot only queues unused prompts. It never auto-approves a generated video and it cannot bypass the paid-generation lock.</p>
+        <label className="checkbox-row"><input type="checkbox" name="autopilotEnabled" defaultChecked={settings.autopilotEnabled} /> Enable general autopilot</label>
+        <label>General videos / rolling 24h<input className="input" type="number" min="0" max="20" name="autopilotGeneralDailyTarget" defaultValue={settings.autopilotGeneralDailyTarget} /></label>
+        <label className="checkbox-row"><input type="checkbox" name="autopilotKidsEnabled" defaultChecked={settings.autopilotKidsEnabled} /> Enable kids autopilot</label>
+        <label>Kids videos / rolling 24h<input className="input" type="number" min="0" max="20" name="autopilotKidsDailyTarget" defaultValue={settings.autopilotKidsDailyTarget} /></label>
+
         <button className="button" disabled={busy}>{busy ? 'Saving…' : 'Save settings'}</button>
         {message ? <p className="muted">{message}</p> : null}
       </form>
