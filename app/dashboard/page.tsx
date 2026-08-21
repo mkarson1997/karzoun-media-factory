@@ -11,6 +11,14 @@ const empty = {
   APPROVED: 0, REJECTED: 0, SCHEDULED: 0, PUBLISHING: 0, PUBLISHED: 0, FAILED: 0, CANCELLED: 0
 };
 
+function formatInZone(date: Date, timeZone: string) {
+  try {
+    return new Intl.DateTimeFormat('en', { timeZone, weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
+  } catch {
+    return date.toISOString();
+  }
+}
+
 export default async function DashboardPage() {
   let counters = empty;
   let activity: Array<{ id: string; action: string; actor: string; createdAt: Date }> = [];
@@ -18,6 +26,13 @@ export default async function DashboardPage() {
   let settings: { productionPaused: boolean; publishingPaused: boolean } = { productionPaused: false, publishingPaused: false };
   let channels: Array<{ id: string; name: string; type: 'GENERAL' | 'KIDS_CHANNEL_ONLY'; externalChannelId: string | null }> = [];
   let autopilot: Awaited<ReturnType<typeof getAutopilotStatus>> | null = null;
+  let upcoming: Array<{
+    id: string;
+    publishAt: Date;
+    timezone: string;
+    visibility: 'PRIVATE' | 'UNLISTED' | 'PUBLIC';
+    job: { prompt: { externalPromptId: string; concept: string }; channel: { name: string } };
+  }> = [];
 
   try {
     const result = await Promise.all([
@@ -25,13 +40,26 @@ export default async function DashboardPage() {
       recentActivity(6),
       prisma.appSettings.findUnique({ where: { id: 'singleton' }, select: { productionPaused: true, publishingPaused: true } }),
       prisma.channel.findMany({ where: { enabled: true }, select: { id: true, name: true, type: true, externalChannelId: true }, orderBy: { createdAt: 'asc' } }),
-      getAutopilotStatus()
+      getAutopilotStatus(),
+      prisma.publishSchedule.findMany({
+        where: { publishAt: { gte: new Date() }, status: 'PENDING' },
+        select: {
+          id: true,
+          publishAt: true,
+          timezone: true,
+          visibility: true,
+          job: { select: { prompt: { select: { externalPromptId: true, concept: true } }, channel: { select: { name: true } } } }
+        },
+        orderBy: { publishAt: 'asc' },
+        take: 3
+      })
     ]);
     counters = result[0];
     activity = result[1];
     if (result[2]) settings = result[2];
     channels = result[3];
     autopilot = result[4];
+    upcoming = result[5];
   } catch {
     databaseReady = false;
   }
@@ -64,10 +92,11 @@ export default async function DashboardPage() {
       <section className="hero">
         <div className="eyebrow">CONTROL ROOM</div>
         <h1>Factory status</h1>
-        <p>Generation, review, scheduling, YouTube publishing and analytics from one mobile control room.</p>
+        <p>Generation, review, smart scheduling, YouTube publishing and analytics from one mobile control room.</p>
         <div className="hero-actions">
           <a className="button" href="/prompts">Open Prompt Library</a>
           <a className="button secondary" href="/review">Review queue</a>
+          <a className="button secondary" href="/schedule">Schedule</a>
           <a className="button secondary" href="/analytics">Analytics</a>
         </div>
       </section>
@@ -101,6 +130,16 @@ export default async function DashboardPage() {
           <a className="button secondary" href="/settings">Targets & kids settings</a>
         </div>
       </section> : null}
+
+      <section className="card">
+        <div className="prompt-head"><div className="section-title">🗓 Next publishing</div><a className="button secondary" href="/schedule">Open schedule</a></div>
+        {upcoming.length ? <div className="list">{upcoming.map((item) => (
+          <div className="row" key={item.id}>
+            <span><strong>{item.job.prompt.externalPromptId}</strong><small className="block muted">{item.job.channel.name} · {item.job.prompt.concept}</small></span>
+            <span><span className="badge">{formatInZone(item.publishAt, item.timezone)}</span><small className="block muted">{item.timezone} · {item.visibility}</small></span>
+          </div>
+        ))}</div> : <p className="muted">Nothing scheduled yet. Approve a review with “Approve + smart schedule” to fill the next safe slot automatically.</p>}
+      </section>
 
       <section className="grid two-col">
         <div className="card">
