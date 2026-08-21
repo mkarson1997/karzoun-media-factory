@@ -31,7 +31,7 @@ services:
       ALLOW_YOUTUBE_UPLOAD: ${ALLOW_YOUTUBE_UPLOAD:-false}
       ALLOW_PUBLIC_PUBLISHING: ${ALLOW_PUBLIC_PUBLISHING:-false}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       db:
         condition: service_healthy
