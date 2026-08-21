@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: kmf
       POSTGRES_USER: kmf
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kmf-local-only}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/prepare-windows.ps1 or set POSTGRES_PASSWORD in .env}
     volumes:
       - kmf-postgres:/var/lib/postgresql/data
     healthcheck:
@@ -19,8 +19,8 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://kmf:${POSTGRES_PASSWORD:-kmf-local-only}@db:5432/kmf?schema=public
-      APP_SECRET: ${APP_SECRET:-kmf-local-only-change-before-remote-use-2026}
+      DATABASE_URL: postgresql://kmf:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/kmf?schema=public
+      APP_SECRET: ${APP_SECRET:?Run scripts/prepare-windows.ps1 or set APP_SECRET in .env}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-mock}
@@ -48,8 +48,8 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://kmf:${POSTGRES_PASSWORD:-kmf-local-only}@db:5432/kmf?schema=public
-      APP_SECRET: ${APP_SECRET:-kmf-local-only-change-before-remote-use-2026}
+      DATABASE_URL: postgresql://kmf:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/kmf?schema=public
+      APP_SECRET: ${APP_SECRET:?Set APP_SECRET in .env}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-mock}
       PUBLISHING_PROVIDER: ${PUBLISHING_PROVIDER:-mock}
