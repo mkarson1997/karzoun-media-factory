@@ -26,7 +26,7 @@ export default async function ReviewPage() {
             </div>
             <div className="prompt-head">
               <div><strong>{job.prompt.externalPromptId}</strong><small className="block muted">{job.prompt.category} · {job.requestedDuration}s · {job.provider}</small></div>
-              <span className="badge">{job.prompt.channelType === 'KIDS_CHANNEL_ONLY' ? 'KIDS ONLY' : 'GENERAL'}</span>
+              <span className="actions"><span className="badge">{job.origin === 'AUTOPILOT' ? '🤖 AUTO' : 'MANUAL'}</span><span className="badge">{job.prompt.channelType === 'KIDS_CHANNEL_ONLY' ? 'KIDS ONLY' : 'GENERAL'}</span></span>
             </div>
             <p>{job.prompt.concept}</p>
             <div className="row"><span>Creative director</span><span className="badge">{job.creativeModel ?? 'NOT PREPARED'}</span></div>
