@@ -14,17 +14,27 @@ const nav = [
   ['Settings', '/settings']
 ] as const;
 
+function runtimeLabel() {
+  const video = process.env.VIDEO_PROVIDER || 'mock';
+  const publishing = process.env.PUBLISHING_PROVIDER || 'mock';
+  const mockOnly = (video === 'mock' || video === 'mock-demo') && publishing === 'mock';
+  if (mockOnly) return 'SAFE MOCK';
+
+  const armed = process.env.ALLOW_PAID_GENERATION === 'true' || process.env.ALLOW_YOUTUBE_UPLOAD === 'true';
+  return armed ? 'LIVE ARMED' : 'LIVE LOCKED';
+}
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body>
         <div className="app-shell">
           <header className="topbar">
-            <div>
+            <a href="/dashboard">
               <div className="eyebrow">KARZOUN</div>
               <div className="brand">Media Factory</div>
-            </div>
-            <span className="status-dot">Mock Mode</span>
+            </a>
+            <a className="status-dot" href="/setup" title="Open activation wizard">{runtimeLabel()}</a>
           </header>
           <main>{children}</main>
           <nav className="bottom-nav" aria-label="Primary">
