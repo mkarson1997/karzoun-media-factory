@@ -6,9 +6,9 @@ Primary channel: **Karzoun Media Lab**.
 
 Core flow:
 
-`Prompt Library → Queue → Claude Creative Plan → Video Provider → Review → Approval → Schedule → YouTube → Analytics`
+`Prompt Library → Autopilot/Manual Queue → Claude Creative Plan → Video Provider → Review → Approval → Schedule → YouTube → Analytics → Better Autopilot choices`
 
-The project is intentionally single-operator and keeps paid generation, real YouTube uploads, and public publishing behind separate safety locks.
+The project is intentionally single-operator and keeps paid generation, automatic paid generation, real YouTube uploads, and public publishing behind separate safety locks.
 
 ## Stack
 
@@ -54,7 +54,7 @@ Configuration/readiness check:
 npm run doctor
 ```
 
-The doctor checks database reachability, operator security, Telegram pairing, Claude/OpenArt configuration, every enabled YouTube channel binding, and publishing safety locks. It does not trigger paid video generation or a YouTube upload.
+The doctor checks database reachability, operator security, Telegram pairing, Claude/OpenArt configuration, Autopilot readiness, every enabled YouTube channel binding, and publishing safety locks. It does not trigger paid video generation or a YouTube upload.
 
 ## 1,000-prompt bank
 
@@ -67,19 +67,7 @@ The repository contains a deterministic generator for exactly **1,000 original S
 - every brief explicitly rejects copied creator footage, copyrighted characters, logos and watermarks
 - kids prompts additionally prohibit frightening injuries, dangerous imitation and realistic peril
 
-Generate the CSV with one command:
-
-```bash
-npm run prompts:generate
-```
-
-Output:
-
-```text
-data/Karzoun_Media_Lab_1000_Shorts_Prompts.csv
-```
-
-Generate and import it into PostgreSQL in one command:
+Install from the mobile Prompt Library with **Install 1,000 prompts**, or generate/import from CLI:
 
 ```bash
 npm run prompts:bootstrap
@@ -89,13 +77,40 @@ CSV columns:
 
 `id,channel,category,duration_seconds,concept,prompt`
 
-You can also import any compatible CSV manually:
+The control plane never automatically routes `KIDS_CHANNEL_ONLY` prompts into a GENERAL channel.
 
-```bash
-npm run import:prompts -- ./data/Karzoun_Media_Lab_1000_Shorts_Prompts.csv
+## Autopilot
+
+Autopilot is **off by default**. When enabled it:
+
+- selects only unused prompts
+- respects the global rolling 24-hour production limit
+- keeps GENERAL and KIDS targets separate
+- learns from real category performance scores after analytics exist
+- keeps exploration alive for categories without enough data
+- penalizes recently repeated categories to keep the feed diverse
+- uses a PostgreSQL advisory lock so duplicate workers cannot fill the same target slot twice
+- stops every generated video at `READY_FOR_REVIEW`
+
+It never auto-approves a video.
+
+Default database targets:
+
+- GENERAL: 2 per rolling 24 hours
+- KIDS: disabled / 0
+
+For a real paid provider there are **two automatic-spending locks**:
+
+```text
+ALLOW_PAID_GENERATION=false
+ALLOW_AUTOPILOT_PAID_GENERATION=false
 ```
 
-The `/prompts` page supports CSV upload from a phone. The control plane never automatically routes `KIDS_CHANNEL_ONLY` prompts into a GENERAL channel.
+A manual paid generation can be tested by unlocking only the first value. Autopilot cannot spend provider credits until **both** are intentionally enabled.
+
+The worker re-checks the Autopilot paid lock immediately before executing an already-queued automatic job, so closing the lock still prevents a queued automatic job from spending credits.
+
+See `docs/AUTOPILOT.md` for the full operating model.
 
 ## Telegram control
 
@@ -113,6 +128,7 @@ Commands:
 
 - `/start`
 - `/status`
+- `/autopilot`
 - `/queue`
 - `/review`
 - `/analytics`
@@ -120,13 +136,17 @@ Commands:
 - `/resume`
 - `/help`
 
-Review controls include **Approve**, **Regenerate**, and **Reject**. Telegram also receives ready-for-review, failure, approval, schedule-reminder, and publishing notifications. `/pause` is the emergency brake for both production and publishing; `/resume` re-enables them.
+`/autopilot` shows daily targets, usage, remaining prompt-bank size and provider safety blocks. Inline controls can enable/disable Autopilot or fill the next safe target slot.
+
+Review controls include **Approve**, **Regenerate**, and **Reject**. Telegram also receives Autopilot queue, ready-for-review, failure, approval, schedule-reminder, and publishing notifications. `/pause` is the emergency brake for both production and publishing; `/resume` re-enables them.
 
 ## Channel isolation
 
 GENERAL and KIDS_CHANNEL_ONLY are separate factory channel records. Each channel can have its own encrypted YouTube OAuth refresh token and external YouTube channel binding.
 
 A kids job cannot fall back to the general channel's OAuth credential. The worker passes the factory channel ID into the YouTube provider and verifies the connected YouTube channel before upload.
+
+Kids Autopilot is independently disabled by default and requires an enabled KIDS channel before it can queue work.
 
 ## Claude creative director
 
@@ -144,7 +164,7 @@ ANTHROPIC_API_KEY=
 ANTHROPIC_MODEL=
 ```
 
-The creative director creates a structured production plan and stores it with the production job before rendering.
+The creative director creates a structured production plan and stores it with the production job before rendering. A creative-quality gate checks visual-beat count, repetition, hooks and child-safety/commercial language before real rendering.
 
 ## OpenArt MCP video generation
 
@@ -153,6 +173,7 @@ Safe default:
 ```text
 VIDEO_PROVIDER=mock
 ALLOW_PAID_GENERATION=false
+ALLOW_AUTOPILOT_PAID_GENERATION=false
 ```
 
 To configure the adapter:
@@ -164,13 +185,7 @@ OPENART_MCP_ACCESS_TOKEN=
 VIDEO_MODEL_HINT=
 ```
 
-Real generation remains blocked until this is intentionally changed:
-
-```text
-ALLOW_PAID_GENERATION=true
-```
-
-`VIDEO_MODEL_HINT` is optional. Leave it empty to let the rendering operator choose a currently suitable model exposed by OpenArt.
+`VIDEO_MODEL_HINT` is optional. Leave it empty to let the rendering operator choose a suitable model exposed by OpenArt.
 
 `REMOTE_MEDIA_ALLOWED_HOSTS` can optionally contain a comma-separated host allowlist for generated media downloads. The downloader rejects HTTP, URL credentials, custom ports, local/private network addresses, unsafe redirects, unsupported content types, and streams larger than 1 GB.
 
@@ -227,42 +242,21 @@ Default cadence:
 ANALYTICS_SYNC_MINUTES=30
 ```
 
-The `/analytics` page also has a manual sync action.
+Stored metrics include views, engaged views, likes, comments, shares, subscribers gained/lost, average view duration, average percentage viewed, engaged-view rate, interaction rate, subscriber conversion rate and a transparent internal performance score.
 
-Stored metrics include:
-
-- views
-- engaged views
-- likes
-- comments
-- shares
-- subscribers gained/lost
-- average view duration
-- average percentage viewed
-- engaged-view rate
-- interaction rate
-- subscriber conversion rate
-- a transparent internal performance score
-
-The score is only for comparing this factory's own Shorts. It is not presented as YouTube's ranking algorithm.
+The score is only for comparing this factory's own Shorts. It is not presented as YouTube's ranking algorithm. Autopilot uses these internal category scores as one signal for future selection.
 
 The public targeted YouTube Analytics API does not expose the YouTube Studio **viewed vs swiped away** card directly, so the factory deliberately leaves that field empty rather than fabricating a value.
 
 ## Pages
 
-- `/dashboard` control-room counters, pause state, activity and connections
-- `/prompts` prompt library, filters, mobile CSV import, queue action
-- `/queue` production state machine and retries
-- `/review` mobile preview, creative plan, approve/regenerate/reject
+- `/dashboard` control room, Autopilot, counters, pause state, activity and connections
+- `/prompts` built-in prompt bank, filters, mobile CSV import, manual queue action
+- `/queue` production state machine, origin labels and retries
+- `/review` mobile preview, Auto/Manual label, creative plan, approve/regenerate/reject
 - `/schedule` private-default publishing schedule
 - `/analytics` performance cockpit and category winners
-- `/settings` limits, channel creation/connection, provider state and safety interlocks
-
-## Local environment variables
-
-See `.env.example`. Never commit `.env` or real credentials.
-
-Use an `APP_SECRET` of at least 32 random characters. In production it protects the operator session and encrypts integration secrets.
+- `/settings` limits, Autopilot targets, channel creation/connection, provider state and safety interlocks
 
 ## Production deployment
 
@@ -282,18 +276,20 @@ npm run doctor
 
 ## Safe first real run
 
-1. Keep `VIDEO_PROVIDER=mock` and `PUBLISHING_PROVIDER=mock` until dashboard + Telegram are working.
-2. Run `npm run prompts:bootstrap`.
-3. Queue and complete a full mock job.
-4. Configure Claude and OpenArt while `ALLOW_PAID_GENERATION=false`.
-5. Run `npm run doctor`.
-6. Unlock paid generation and create **one** real video.
-7. Review it manually from phone/Telegram.
-8. Connect the correct YouTube channel from Settings.
-9. Set `PUBLISHING_PROVIDER=youtube`, `ALLOW_YOUTUBE_UPLOAD=true`, and keep `ALLOW_PUBLIC_PUBLISHING=false`.
-10. Upload **one PRIVATE test video**.
-11. Verify analytics ingestion.
-12. Only then increase production volume.
+1. Keep video and publishing providers in mock mode.
+2. Install the 1,000-prompt bank.
+3. Enable Autopilot in mock mode and verify it selects distinct prompts and stops at review.
+4. Verify Telegram Approve/Regenerate/Reject and `/pause`.
+5. Configure Claude + OpenArt while both paid locks remain false.
+6. Run `npm run doctor` and `npm run validate`.
+7. Unlock only `ALLOW_PAID_GENERATION=true` and create **one manual real video**.
+8. Review it from phone/Telegram.
+9. Only after that test, optionally unlock `ALLOW_AUTOPILOT_PAID_GENERATION=true`.
+10. Connect the correct YouTube channel from Settings.
+11. Enable YouTube upload while keeping public publishing locked.
+12. Upload **one PRIVATE test video**.
+13. Verify analytics ingestion.
+14. Only then increase daily targets or enable public publishing.
 
 ## Milestones
 
@@ -306,6 +302,7 @@ npm run doctor
 7. ✅ YouTube OAuth + private-first uploader
 8. ✅ Scheduler + publishing provider routing
 9. ✅ YouTube analytics + internal performance scoring
-10. 🚧 Final runtime validation and deployment activation
+10. 🚧 Runtime validation and deployment activation
+11. ✅ Analytics-aware Autopilot with independent paid-spend lock
 
 See `SECURITY.md` before connecting paid or publishing credentials.
