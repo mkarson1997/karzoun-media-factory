@@ -1,3 +1,5 @@
+import { ApiActionButton } from '@/app/components/ApiActionButton';
+import { getAutopilotStatus } from '@/src/lib/autopilot';
 import { getFactoryCounters, recentActivity } from '@/src/lib/control-plane';
 import { prisma } from '@/src/lib/prisma';
 import { getYouTubeConnectionStatus } from '@/src/lib/youtube-auth';
@@ -15,18 +17,21 @@ export default async function DashboardPage() {
   let databaseReady = true;
   let settings: { productionPaused: boolean; publishingPaused: boolean } = { productionPaused: false, publishingPaused: false };
   let channels: Array<{ id: string; name: string; type: 'GENERAL' | 'KIDS_CHANNEL_ONLY'; externalChannelId: string | null }> = [];
+  let autopilot: Awaited<ReturnType<typeof getAutopilotStatus>> | null = null;
 
   try {
     const result = await Promise.all([
       getFactoryCounters(),
       recentActivity(6),
       prisma.appSettings.findUnique({ where: { id: 'singleton' }, select: { productionPaused: true, publishingPaused: true } }),
-      prisma.channel.findMany({ where: { enabled: true }, select: { id: true, name: true, type: true, externalChannelId: true }, orderBy: { createdAt: 'asc' } })
+      prisma.channel.findMany({ where: { enabled: true }, select: { id: true, name: true, type: true, externalChannelId: true }, orderBy: { createdAt: 'asc' } }),
+      getAutopilotStatus()
     ]);
     counters = result[0];
     activity = result[1];
     if (result[2]) settings = result[2];
     channels = result[3];
+    autopilot = result[4];
   } catch {
     databaseReady = false;
   }
@@ -76,6 +81,27 @@ export default async function DashboardPage() {
         ))}
       </section>
 
+      {autopilot ? <section className="card">
+        <div className="prompt-head">
+          <div>
+            <div className="section-title">🤖 Autopilot</div>
+            <p className="muted">Selects unused prompts, learns from category performance, and stops every video at manual review.</p>
+          </div>
+          <span className="badge">{autopilot.enabled ? 'ARMED' : 'OFF'}</span>
+        </div>
+        <div className="row"><span>General target</span><span className="badge">{autopilot.rolling24h.generalQueued}/{autopilot.rolling24h.generalTarget}</span></div>
+        <div className="row"><span>Kids target</span><span className="badge">{autopilot.kidsEnabled ? `${autopilot.rolling24h.kidsQueued}/${autopilot.rolling24h.kidsTarget}` : 'OFF'}</span></div>
+        <div className="row"><span>Unused prompt bank</span><span className="muted">{autopilot.unused.general} general · {autopilot.unused.kids} kids</span></div>
+        {autopilot.safetyBlock ? <div className="notice">{autopilot.safetyBlock}</div> : null}
+        <div className="actions">
+          {autopilot.enabled
+            ? <ApiActionButton endpoint="/api/autopilot/toggle" body={{ enabled: false }} label="⏹ Disable autopilot" />
+            : <ApiActionButton endpoint="/api/autopilot/toggle" body={{ enabled: true }} label="🤖 Enable autopilot" confirmText="Enable automatic GENERAL idea selection? Videos will still require manual review before publishing." />}
+          {autopilot.enabled ? <ApiActionButton endpoint="/api/autopilot/tick" body={{}} label="⚡ Queue next safe idea" /> : null}
+          <a className="button secondary" href="/settings">Targets & kids settings</a>
+        </div>
+      </section> : null}
+
       <section className="grid two-col">
         <div className="card">
           <div className="section-title">Connections & interlocks</div>
@@ -103,7 +129,7 @@ export default async function DashboardPage() {
           <div className="section-title">Recent activity</div>
           {activity.length ? <div className="list">{activity.map((item) => (
             <div className="row" key={item.id}><span>{item.action}<small className="block muted">{item.actor}</small></span><span className="muted">{item.createdAt.toLocaleString()}</span></div>
-          ))}</div> : <p className="muted">No activity yet. Import prompts and run a mock job to begin.</p>}
+          ))}</div> : <p className="muted">No activity yet. Install prompts and run a mock job to begin.</p>}
         </div>
       </section>
     </div>
