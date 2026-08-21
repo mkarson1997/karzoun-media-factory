@@ -20,10 +20,14 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://kmf:${POSTGRES_PASSWORD:-kmf-local-only}@db:5432/kmf?schema=public
+      APP_SECRET: ${APP_SECRET:-kmf-local-only-change-before-remote-use-2026}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-mock}
       PUBLISHING_PROVIDER: ${PUBLISHING_PROVIDER:-mock}
       CREATIVE_DIRECTOR: ${CREATIVE_DIRECTOR:-mock}
       ALLOW_PAID_GENERATION: ${ALLOW_PAID_GENERATION:-false}
+      ALLOW_AUTOPILOT_PAID_GENERATION: ${ALLOW_AUTOPILOT_PAID_GENERATION:-false}
       ALLOW_YOUTUBE_UPLOAD: ${ALLOW_YOUTUBE_UPLOAD:-false}
       ALLOW_PUBLIC_PUBLISHING: ${ALLOW_PUBLIC_PUBLISHING:-false}
     ports:
@@ -45,13 +49,15 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://kmf:${POSTGRES_PASSWORD:-kmf-local-only}@db:5432/kmf?schema=public
+      APP_SECRET: ${APP_SECRET:-kmf-local-only-change-before-remote-use-2026}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-mock}
       PUBLISHING_PROVIDER: ${PUBLISHING_PROVIDER:-mock}
       CREATIVE_DIRECTOR: ${CREATIVE_DIRECTOR:-mock}
       ALLOW_PAID_GENERATION: ${ALLOW_PAID_GENERATION:-false}
+      ALLOW_AUTOPILOT_PAID_GENERATION: ${ALLOW_AUTOPILOT_PAID_GENERATION:-false}
       ALLOW_YOUTUBE_UPLOAD: ${ALLOW_YOUTUBE_UPLOAD:-false}
       ALLOW_PUBLIC_PUBLISHING: ${ALLOW_PUBLIC_PUBLISHING:-false}
-      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
       ANALYTICS_SYNC_MINUTES: ${ANALYTICS_SYNC_MINUTES:-30}
     depends_on:
       app:
