@@ -21,7 +21,7 @@ services:
     environment:
       DATABASE_URL: postgresql://kmf:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/kmf?schema=public
       APP_SECRET: ${APP_SECRET:?Run scripts/prepare-windows.ps1 or set APP_SECRET in .env}
-      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3100}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-mock}
       PUBLISHING_PROVIDER: ${PUBLISHING_PROVIDER:-mock}
@@ -31,7 +31,7 @@ services:
       ALLOW_YOUTUBE_UPLOAD: ${ALLOW_YOUTUBE_UPLOAD:-false}
       ALLOW_PUBLIC_PUBLISHING: ${ALLOW_PUBLIC_PUBLISHING:-false}
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${KMF_PORT:-3100}:3000"
     depends_on:
       db:
         condition: service_healthy
@@ -50,7 +50,7 @@ services:
     environment:
       DATABASE_URL: postgresql://kmf:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/kmf?schema=public
       APP_SECRET: ${APP_SECRET:?Set APP_SECRET in .env}
-      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3100}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-mock}
       PUBLISHING_PROVIDER: ${PUBLISHING_PROVIDER:-mock}
       CREATIVE_DIRECTOR: ${CREATIVE_DIRECTOR:-mock}
