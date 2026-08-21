@@ -29,6 +29,17 @@ function Read-DotEnvLines([string]$Path) {
     return $lines
 }
 
+function Get-DotEnvValue([string]$Path, [string]$Key) {
+    if (-not (Test-Path $Path)) { return $null }
+    $prefix = "$Key="
+    foreach ($line in Get-Content $Path) {
+        if ($line.StartsWith($prefix, [System.StringComparison]::Ordinal)) {
+            return $line.Substring($prefix.Length)
+        }
+    }
+    return $null
+}
+
 function Set-DotEnvValue([string]$Path, [string]$Key, [string]$Value, [switch]$OnlyIfBlank) {
     $lines = Read-DotEnvLines $Path
     $index = -1
@@ -66,7 +77,24 @@ if (-not (Test-Path $envPath)) {
 
 Set-DotEnvValue $envPath 'POSTGRES_PASSWORD' (New-HexSecret 24) -OnlyIfBlank
 Set-DotEnvValue $envPath 'APP_SECRET' (New-HexSecret 32) -OnlyIfBlank
-Set-DotEnvValue $envPath 'APP_BASE_URL' 'http://localhost:3000' -OnlyIfBlank
+Set-DotEnvValue $envPath 'KMF_PORT' '3100' -OnlyIfBlank
+
+$factoryPort = Get-DotEnvValue $envPath 'KMF_PORT'
+if ([string]::IsNullOrWhiteSpace($factoryPort) -or $factoryPort -notmatch '^\d{2,5}$' -or [int]$factoryPort -lt 1024 -or [int]$factoryPort -gt 65535) {
+    $factoryPort = '3100'
+    Set-DotEnvValue $envPath 'KMF_PORT' $factoryPort
+}
+
+$currentBaseUrl = Get-DotEnvValue $envPath 'APP_BASE_URL'
+if (
+    [string]::IsNullOrWhiteSpace($currentBaseUrl) -or
+    $currentBaseUrl -eq 'http://localhost:3000' -or
+    $currentBaseUrl -eq 'http://127.0.0.1:3000'
+) {
+    Set-DotEnvValue $envPath 'APP_BASE_URL' "http://localhost:$factoryPort"
+}
+
+$localBaseUrl = "http://localhost:$factoryPort"
 Set-DotEnvValue $envPath 'SEED_DEMO_DATA' 'false' -OnlyIfBlank
 Set-DotEnvValue $envPath 'ANTHROPIC_MODEL' 'claude-opus-5' -OnlyIfBlank
 
@@ -80,6 +108,7 @@ Set-DotEnvValue $envPath 'PUBLISHING_PROVIDER' 'mock'
 Set-DotEnvValue $envPath 'ALLOW_YOUTUBE_UPLOAD' 'false'
 Set-DotEnvValue $envPath 'ALLOW_PUBLIC_PUBLISHING' 'false'
 
+Write-Host "Using local factory URL: $localBaseUrl" -ForegroundColor Cyan
 Write-Host 'Validating Docker Compose configuration...'
 docker compose config | Out-Null
 Assert-LastExit 'docker compose config failed. Check .env and Docker Compose syntax.'
@@ -92,7 +121,7 @@ $deadline = (Get-Date).AddMinutes(4)
 $healthy = $false
 while ((Get-Date) -lt $deadline) {
     try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri 'http://localhost:3000/api/health' -TimeoutSec 4
+        $response = Invoke-WebRequest -UseBasicParsing -Uri "$localBaseUrl/api/health" -TimeoutSec 4
         if ($response.StatusCode -eq 200) { $healthy = $true; break }
     } catch {}
     Start-Sleep -Seconds 4
@@ -106,9 +135,9 @@ if (-not $healthy) {
 }
 
 Write-Host "`nSAFE MOCK FACTORY IS ONLINE" -ForegroundColor Green
-Write-Host 'Dashboard: http://localhost:3000/dashboard'
-Write-Host 'Launch wizard: http://localhost:3000/setup'
+Write-Host "Dashboard: $localBaseUrl/dashboard"
+Write-Host "Launch wizard: $localBaseUrl/setup"
 Write-Host 'Your operator login secret is APP_SECRET in the local .env file.'
 Write-Host 'Next: open /setup, press Prepare safe factory, then configure Telegram/Claude/OpenArt/YouTube one service at a time.'
 
-try { Start-Process 'http://localhost:3000/setup' } catch {}
+try { Start-Process "$localBaseUrl/setup" } catch {}
