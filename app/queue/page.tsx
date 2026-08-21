@@ -21,17 +21,21 @@ export default async function QueuePage() {
 
       <section className="card">
         <div className="section-title">Latest jobs</div>
-        {jobs.length ? <div className="list">{jobs.map((job) => (
+        {jobs.length ? <div className="list">{jobs.map((job) => {
+          const mockJob = job.provider === 'mock' || job.provider === 'mock-demo';
+          return (
           <article className="job-card" key={job.id}>
             <div className="prompt-head">
               <div><strong>{job.prompt.externalPromptId}</strong><small className="block muted">{job.prompt.category} · {job.requestedDuration}s · {job.channel.name}</small></div>
               <span className="actions"><span className="badge">{job.origin === 'AUTOPILOT' ? '🤖 AUTO' : 'MANUAL'}</span><span className="badge">{job.status}</span></span>
             </div>
             <p>{job.prompt.concept}</p>
+            <div className="row"><span>Provider</span><span className="badge">{job.provider.toUpperCase()}</span></div>
             {job.schedule ? <div className="row"><span>Publish slot<small className="block muted">{job.schedule.timezone} · {job.schedule.visibility}</small></span><span className="badge">{job.schedule.publishAt.toLocaleString()}</span></div> : null}
+            {!mockJob && (job.status === 'QUEUED' || job.status === 'GENERATING') ? <p className="muted">Live-provider state is worker-owned. The dashboard cannot fake completion or skip the renderer.</p> : null}
             <div className="actions">
-              {job.status === 'QUEUED' ? <ApiActionButton endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'GENERATING' }} label="Start mock generation" /> : null}
-              {job.status === 'GENERATING' ? <ApiActionButton endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'READY_FOR_REVIEW' }} label="Finish mock generation" /> : null}
+              {mockJob && job.status === 'QUEUED' ? <ApiActionButton endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'GENERATING' }} label="Start mock generation" /> : null}
+              {mockJob && job.status === 'GENERATING' ? <ApiActionButton endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'READY_FOR_REVIEW' }} label="Finish mock generation" /> : null}
               {job.status === 'FAILED' || job.status === 'REJECTED' ? <ApiActionButton endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'QUEUED' }} label="Retry" /> : null}
               {['DRAFT','QUEUED','GENERATING','REJECTED','SCHEDULED','FAILED'].includes(job.status) ? <ApiActionButton className="button danger" endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'CANCELLED' }} label="Cancel" confirmText="Cancel this job?" /> : null}
               {job.status === 'READY_FOR_REVIEW' ? <a className="button" href="/review">Review</a> : null}
@@ -39,7 +43,7 @@ export default async function QueuePage() {
               {job.status === 'APPROVED' ? <a className="button secondary" href={`/schedule?job=${job.id}`}>Choose time</a> : null}
             </div>
           </article>
-        ))}</div> : <p className="muted">Queue is empty.</p>}
+        );})}</div> : <p className="muted">Queue is empty.</p>}
       </section>
     </div>
   );
