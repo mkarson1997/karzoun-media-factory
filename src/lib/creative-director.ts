@@ -41,22 +41,33 @@ export interface CreativeDirector {
 
 export class MockCreativeDirector implements CreativeDirector {
   async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
-    const split = Math.max(12, Math.floor(input.durationSeconds * 0.55));
+    const shotCount = Math.max(5, Math.min(12, Math.ceil(input.durationSeconds / 5)));
+    const shots = Array.from({ length: shotCount }, (_, index) => {
+      const startSecond = Number(((input.durationSeconds * index) / shotCount).toFixed(2));
+      const endSecond = Number(((input.durationSeconds * (index + 1)) / shotCount).toFixed(2));
+      return {
+        startSecond,
+        endSecond,
+        visualPrompt: `${input.fullPrompt}\nMock visual beat ${index + 1}/${shotCount}. Advance the story with a distinct composition, action and foreground/background relationship. Original imagery only.`,
+        camera: index === 0 ? 'Immediate establishing hook into a controlled push-in.' : index === shotCount - 1 ? 'Resolve on a clean final composition that can loop into the opening.' : `Motivated shot ${index + 1}: vary scale and movement while preserving continuity.`,
+        narration: ''
+      };
+    });
+
     return {
       model: 'mock-creative-director',
       plan: creativePlanSchema.parse({
         hook: `What happens if we visualize this: ${input.concept}?`,
-        script: `This is a mock creative plan for ${input.concept}. It proves the factory workflow without calling an AI model or spending credits.`,
+        script: `This is a deterministic mock creative plan for ${input.concept}. It exercises pacing, continuity, review, scheduling and safety gates without calling an AI model or spending provider credits.`,
         title: input.concept.slice(0, 55),
-        description: 'Mock-mode production plan. Claude can replace this only after the creative director is explicitly enabled.',
-        hashtags: ['#Shorts', '#AI', '#KarzounMediaLab'],
-        visualStyle: 'Original cinematic vertical short, clean high-contrast composition, no copyrighted characters or logos.',
-        audioDirection: 'Original or licensed audio only. Clear narration and restrained sound design.',
-        shots: [
-          { startSecond: 0, endSecond: split, visualPrompt: `${input.fullPrompt}\nOpening section. Strong visual hook. Original imagery only.`, camera: 'Fast establishing move into a controlled push-in.', narration: '' },
-          { startSecond: split, endSecond: input.durationSeconds, visualPrompt: `${input.fullPrompt}\nPayoff section. Resolve the idea and create a seamless loop.`, camera: 'Motivated close-ups followed by a clean looping final frame.', narration: '' }
-        ],
-        safetyNotes: input.channelType === 'KIDS_CHANNEL_ONLY' ? ['Kids-only routing required.', 'Keep language calm, positive and age-appropriate.'] : ['General-audience routing.']
+        description: 'Mock-mode production plan. Claude replaces this only after the creative director is explicitly enabled.',
+        hashtags: ['#Shorts', '#Original', '#KarzounMediaLab'],
+        visualStyle: 'Original cinematic vertical short, clean high-contrast composition, varied shot scale, no copyrighted characters or logos.',
+        audioDirection: 'Original or licensed audio only. Clear narration when present and restrained sound design.',
+        shots,
+        safetyNotes: input.channelType === 'KIDS_CHANNEL_ONLY'
+          ? ['Kids-only routing required.', 'Keep language calm, positive, non-commercial and age-appropriate.', 'Avoid realistic danger or imitable hazardous behavior.']
+          : ['General-audience routing.', 'Keep the finished Short advertiser-friendly and original.']
       })
     };
   }
@@ -68,14 +79,15 @@ export class AnthropicCreativeDirector implements CreativeDirector {
     if (!process.env.ANTHROPIC_API_KEY || !model) throw new Error('Claude creative director is enabled but its environment configuration is incomplete');
 
     const client = new Anthropic();
+    const minShots = Math.max(5, Math.ceil(input.durationSeconds / 6));
     const message = await client.messages.create({
       model,
-      max_tokens: 2200,
-      temperature: 0.5,
-      system: 'You are the creative director for Karzoun Media Factory. Return only valid JSON. Design original, advertiser-friendly vertical Shorts. Never imitate an existing channel, copyrighted character, celebrity, logo, or creator footage. Factual claims must be conservative and verifiable. Kids-only content must remain age-appropriate and non-commercial.',
+      max_tokens: 3000,
+      temperature: 0.45,
+      system: 'You are the creative director for Karzoun Media Factory. Return only valid JSON. Design genuinely original, advertiser-friendly vertical Shorts with a clear viewer payoff. Never imitate an existing channel, copyrighted character, celebrity, logo, franchise style, or creator footage. Do not generate filler or near-duplicate shots. Factual claims must be conservative and verifiable. Kids-only content must remain age-appropriate, non-commercial, non-frightening, and must not encourage dangerous imitation or manipulative engagement.',
       messages: [{
         role: 'user',
-        content: `Prepare a production plan for this ${input.durationSeconds}-second 9:16 Short.\nID: ${input.externalPromptId}\nChannel type: ${input.channelType}\nCategory: ${input.category}\nConcept: ${input.concept}\nSource prompt:\n${input.fullPrompt}\n\nReturn exactly this JSON shape: {"hook":"","script":"","title":"max 55 chars","description":"","hashtags":["#..."],"visualStyle":"","audioDirection":"","shots":[{"startSecond":0,"endSecond":5,"visualPrompt":"","camera":"","narration":""}],"safetyNotes":[""]}. Shots must cover the full duration in chronological order.`
+        content: `Prepare a production plan for this ${input.durationSeconds}-second 9:16 Short.\nID: ${input.externalPromptId}\nChannel type: ${input.channelType}\nCategory: ${input.category}\nConcept: ${input.concept}\nSource prompt:\n${input.fullPrompt}\n\nReturn exactly this JSON shape: {"hook":"","script":"","title":"max 55 chars","description":"","hashtags":["#..."],"visualStyle":"","audioDirection":"","shots":[{"startSecond":0,"endSecond":5,"visualPrompt":"","camera":"","narration":""}],"safetyNotes":[""]}. Shots must cover the full duration in chronological order with no gaps or overlaps. Use at least ${minShots} materially different visual beats. The first shot must communicate the hook immediately, the middle must escalate rather than repeat, and the final shot must deliver a real payoff and preferably a natural loop. Keep title/description truthful and avoid fake urgency or guaranteed-view language.`
       }]
     });
 
