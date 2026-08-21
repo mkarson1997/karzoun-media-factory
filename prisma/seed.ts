@@ -16,7 +16,10 @@ async function main() {
     }
   });
 
-  const channel = await prisma.channel.findFirst({ where: { name: 'Karzoun Media Lab' } }) ?? await prisma.channel.create({
+  const channel = await prisma.channel.findFirst({
+    where: { type: ChannelType.GENERAL },
+    orderBy: { createdAt: 'asc' }
+  }) ?? await prisma.channel.create({
     data: {
       name: 'Karzoun Media Lab',
       type: ChannelType.GENERAL,
@@ -26,7 +29,7 @@ async function main() {
   });
 
   if (process.env.SEED_DEMO_DATA !== 'true') {
-    console.log('Seed complete: core settings + Karzoun Media Lab. Demo data disabled.');
+    console.log(`Seed complete: core settings + GENERAL channel (${channel.name}). Demo data disabled.`);
     return;
   }
 
@@ -61,7 +64,7 @@ async function main() {
     });
   }
 
-  console.log('Seed complete: core settings + Karzoun Media Lab + explicitly enabled demo workflow.');
+  console.log(`Seed complete: core settings + GENERAL channel (${channel.name}) + explicitly enabled demo workflow.`);
 }
 
 main()
