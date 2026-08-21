@@ -1,52 +1,65 @@
 # Karzoun Media Factory
 
-Private, mobile-first control center for producing, reviewing, scheduling, publishing, and learning from AI-generated short-form video.
+Private, mobile-first control center for AI short-video production.
 
 Primary channel: **Karzoun Media Lab**.
 
-Core flow:
+Flow:
 
-`Prompt Library → Autopilot/Manual Queue → Claude Creative Plan → Video Provider → Review → Approval → Schedule → YouTube → Analytics → Better Autopilot choices`
+`Prompt Bank → Autopilot/Manual Queue → Claude → Video Provider → Review → Smart Schedule → YouTube → Analytics → Better future choices`
 
-The project is intentionally single-operator and keeps paid generation, automatic paid generation, real YouTube uploads, and public publishing behind separate safety locks.
+The factory is single-operator by design. Paid generation, paid Autopilot, YouTube upload, and PUBLIC publishing use separate safety locks.
 
 ## Stack
 
 - Next.js + React + TypeScript
 - PostgreSQL + Prisma
-- Telegram Bot API via Telegraf
-- Claude/Anthropic creative-director adapter
-- OpenArt remote MCP video-provider adapter
+- Telegram via Telegraf
+- Claude/Anthropic creative director
+- OpenArt remote MCP video provider
 - Google OAuth + YouTube Data API + YouTube Analytics API
 - Zod + Vitest + ESLint
 - Docker Compose
 
-## Fast local start
+## Fast start
 
 ```bash
 cp .env.example .env
 docker compose up -d --build
 ```
 
-Open `http://localhost:3000/dashboard`.
+Open:
 
-The local Compose stack starts PostgreSQL, pushes the Prisma schema, seeds safe demo data, starts the web app, and starts the worker.
+- `/dashboard` daily control room
+- `/setup` phone-first activation wizard
 
-Stop it with:
+The header safety badge links to `/setup` from every page.
 
-```bash
-docker compose down
-```
+## Activation wizard
+
+`/setup` shows:
+
+- database and operator-security readiness
+- prompt-bank state
+- Telegram state and test action
+- Claude/OpenArt configuration state
+- every YouTube channel binding
+- paid-generation locks
+- Autopilot spending lock
+- YouTube upload lock
+- PUBLIC publishing lock
+
+It shows missing environment-variable **names only**. Secret values are never rendered.
+
+See `docs/PHONE_LAUNCH.md` for the shortest phone-first operating flow.
 
 ## Validation
 
-One command:
+Static + build validation:
 
 ```bash
 npm run validate
 ```
-
-This runs lint, TypeScript checks, tests, and a production build.
 
 Configuration/readiness check:
 
@@ -54,63 +67,80 @@ Configuration/readiness check:
 npm run doctor
 ```
 
-The doctor checks database reachability, operator security, Telegram pairing, Claude/OpenArt configuration, Autopilot readiness, every enabled YouTube channel binding, and publishing safety locks. It does not trigger paid video generation or a YouTube upload.
+Safe mock end-to-end test:
+
+```bash
+npm run smoke:mock
+```
+
+Everything together:
+
+```bash
+npm run verify:mock
+```
+
+The smoke flow refuses paid/provider upload locks, pauses background lanes, creates temporary data, proves Queue → Generate → Review → Approve + Smart Schedule → Publish, cleans up, then restores the previous factory settings.
 
 ## 1,000-prompt bank
 
-The repository contains a deterministic generator for exactly **1,000 original Shorts briefs**:
+The built-in deterministic bank contains exactly:
 
-- **650 GENERAL** prompts across 13 entertainment categories
-- **350 KIDS_CHANNEL_ONLY** prompts across 7 child-safe categories
-- every requested duration is between **30 and 59 seconds**
-- every brief requests vertical 9:16 output, a fast hook, continuity, captions/sound design, and a loopable ending
-- every brief explicitly rejects copied creator footage, copyrighted characters, logos and watermarks
-- kids prompts additionally prohibit frightening injuries, dangerous imitation and realistic peril
+- **650 GENERAL** briefs
+- **350 KIDS_CHANNEL_ONLY** briefs
+- 30–59 second targets
+- vertical 9:16 direction
+- hook, pacing, continuity, captions/sound direction, payoff, and loopable ending
+- explicit original-content/copyright constraints
+- additional kids safety constraints
 
-Install from the mobile Prompt Library with **Install 1,000 prompts**, or generate/import from CLI:
+Install with one tap from `/prompts`, or:
 
 ```bash
 npm run prompts:bootstrap
 ```
 
-CSV columns:
-
-`id,channel,category,duration_seconds,concept,prompt`
-
-The control plane never automatically routes `KIDS_CHANNEL_ONLY` prompts into a GENERAL channel.
+GENERAL and KIDS prompts never auto-route into the wrong channel type.
 
 ## Autopilot
 
-Autopilot is **off by default**. When enabled it:
+Autopilot is **off by default**.
 
-- selects only unused prompts
-- respects the global rolling 24-hour production limit
+When enabled it:
+
+- chooses only unused prompts
+- respects rolling 24-hour production limits
 - keeps GENERAL and KIDS targets separate
-- learns from real category performance scores after analytics exist
-- keeps exploration alive for categories without enough data
-- penalizes recently repeated categories to keep the feed diverse
-- uses a PostgreSQL advisory lock so duplicate workers cannot fill the same target slot twice
-- stops every generated video at `READY_FOR_REVIEW`
+- learns from category performance after real analytics exist
+- still explores categories without enough data
+- penalizes recently repeated categories
+- uses database locks against duplicate workers
+- stops every generated video at manual review
 
-It never auto-approves a video.
+It never approves its own video.
 
-Default database targets:
-
-- GENERAL: 2 per rolling 24 hours
-- KIDS: disabled / 0
-
-For a real paid provider there are **two automatic-spending locks**:
+Real paid Autopilot requires both:
 
 ```text
-ALLOW_PAID_GENERATION=false
-ALLOW_AUTOPILOT_PAID_GENERATION=false
+ALLOW_PAID_GENERATION=true
+ALLOW_AUTOPILOT_PAID_GENERATION=true
 ```
 
-A manual paid generation can be tested by unlocking only the first value. Autopilot cannot spend provider credits until **both** are intentionally enabled.
+Manual paid testing can unlock only the first value. A blocked paid Autopilot job cannot starve a later manual job in the worker queue.
 
-The worker re-checks the Autopilot paid lock immediately before executing an already-queued automatic job, so closing the lock still prevents a queued automatic job from spending credits.
+## Smart scheduling
 
-See `docs/AUTOPILOT.md` for the full operating model.
+From Review or Telegram, one tap can **Approve + smart schedule**.
+
+Before enough analytics exist, the scheduler uses clearly labeled starter slots. After enough scored factory publications exist, it learns stronger observed local publishing hours from the factory's own data.
+
+It also enforces:
+
+- minimum lead time
+- minimum spacing between scheduled uploads
+- IANA timezone conversion
+- PRIVATE-first visibility safety
+
+The scheduler does not claim to know a universal YouTube “best time.”
 
 ## Telegram control
 
@@ -122,31 +152,29 @@ TELEGRAM_ALLOWED_USER_ID=
 APP_BASE_URL=https://factory.example.com
 ```
 
-Only the allowlisted Telegram account is accepted.
+Only the allowlisted Telegram user is accepted.
 
-Commands:
+Useful commands:
 
-- `/start`
-- `/status`
-- `/autopilot`
-- `/queue`
-- `/review`
-- `/analytics`
-- `/pause`
-- `/resume`
-- `/help`
+```text
+/status
+/autopilot
+/queue
+/review
+/schedule
+/analytics
+/pause
+/resume
+```
 
-`/autopilot` shows daily targets, usage, remaining prompt-bank size and provider safety blocks. Inline controls can enable/disable Autopilot or fill the next safe target slot.
+Ready-for-review alerts include inline actions for:
 
-Review controls include **Approve**, **Regenerate**, and **Reject**. Telegram also receives Autopilot queue, ready-for-review, failure, approval, schedule-reminder, and publishing notifications. `/pause` is the emergency brake for both production and publishing; `/resume` re-enables them.
+- Approve + smart schedule
+- Approve only
+- Regenerate
+- Reject
 
-## Channel isolation
-
-GENERAL and KIDS_CHANNEL_ONLY are separate factory channel records. Each channel can have its own encrypted YouTube OAuth refresh token and external YouTube channel binding.
-
-A kids job cannot fall back to the general channel's OAuth credential. The worker passes the factory channel ID into the YouTube provider and verifies the connected YouTube channel before upload.
-
-Kids Autopilot is independently disabled by default and requires an enabled KIDS channel before it can queue work.
+`/pause` is the emergency brake for generation and publishing.
 
 ## Claude creative director
 
@@ -156,7 +184,7 @@ Safe default:
 CREATIVE_DIRECTOR=mock
 ```
 
-Real Claude planning:
+Real mode:
 
 ```text
 CREATIVE_DIRECTOR=anthropic
@@ -164,7 +192,7 @@ ANTHROPIC_API_KEY=
 ANTHROPIC_MODEL=
 ```
 
-The creative director creates a structured production plan and stores it with the production job before rendering. A creative-quality gate checks visual-beat count, repetition, hooks and child-safety/commercial language before real rendering.
+The creative plan is validated before rendering. The quality gate checks visual-beat count, repetition, hook/script quality, manipulation language, and kids-specific commercial/safety rules.
 
 ## OpenArt MCP video generation
 
@@ -176,7 +204,7 @@ ALLOW_PAID_GENERATION=false
 ALLOW_AUTOPILOT_PAID_GENERATION=false
 ```
 
-To configure the adapter:
+Real configuration:
 
 ```text
 VIDEO_PROVIDER=openart-mcp
@@ -185,36 +213,26 @@ OPENART_MCP_ACCESS_TOKEN=
 VIDEO_MODEL_HINT=
 ```
 
-`VIDEO_MODEL_HINT` is optional. Leave it empty to let the rendering operator choose a suitable model exposed by OpenArt.
+The OpenArt adapter remains unable to spend credits until `ALLOW_PAID_GENERATION=true`.
 
-`REMOTE_MEDIA_ALLOWED_HOSTS` can optionally contain a comma-separated host allowlist for generated media downloads. The downloader rejects HTTP, URL credentials, custom ports, local/private network addresses, unsafe redirects, unsupported content types, and streams larger than 1 GB.
+Remote generated-media ingestion is HTTPS-only and blocks credentials in URLs, custom ports, private/local networks, unsafe redirects, unsupported content types, and oversized streams. `REMOTE_MEDIA_ALLOWED_HOSTS` can further restrict provider CDN hosts.
 
-## YouTube connection
+## YouTube
 
-Configure the Google OAuth client:
+Configure:
 
 ```text
 YOUTUBE_CLIENT_ID=
 YOUTUBE_CLIENT_SECRET=
 APP_BASE_URL=https://factory.example.com
-APP_SECRET=<strong random secret>
+APP_SECRET=<at least 32 random characters>
 ```
 
-Then open Settings and connect YouTube separately for each enabled factory channel. Refresh tokens are encrypted with `APP_SECRET` before storage in PostgreSQL.
+Connect each factory channel separately from `/setup` or `/settings`.
 
-The requested scopes cover upload, read-only channel access, and YouTube Analytics.
+Refresh tokens are stored encrypted with AES-GCM. A KIDS channel never falls back to the GENERAL channel credential.
 
-## Publishing safety locks
-
-Default:
-
-```text
-PUBLISHING_PROVIDER=mock
-ALLOW_YOUTUBE_UPLOAD=false
-ALLOW_PUBLIC_PUBLISHING=false
-```
-
-For the first real test, keep public publishing locked and enable only:
+Safe first upload:
 
 ```text
 PUBLISHING_PROVIDER=youtube
@@ -222,87 +240,89 @@ ALLOW_YOUTUBE_UPLOAD=true
 ALLOW_PUBLIC_PUBLISHING=false
 ```
 
-That forces YouTube uploads to **PRIVATE** even if a schedule accidentally requests another visibility.
+With the public lock closed, real YouTube uploads are forced to **PRIVATE**.
 
-Only after private end-to-end verification should public publishing ever be considered:
+Kids jobs send the Made for Kids declaration automatically from `KIDS_CHANNEL_ONLY` routing.
 
-```text
-ALLOW_PUBLIC_PUBLISHING=true
-```
+## Analytics
 
-Kids jobs pass the Made for Kids flag to YouTube automatically from their `KIDS_CHANNEL_ONLY` classification.
+The worker periodically stores real YouTube metrics and a transparent internal comparison score used by Analytics, Autopilot, and Smart Scheduling.
 
-## Analytics learning loop
+The system does not fabricate metrics that the targeted public YouTube Analytics API does not expose.
 
-The worker periodically collects real metrics for videos uploaded by this factory.
+## Demo data
 
-Default cadence:
+Demo data is opt-in:
 
 ```text
-ANALYTICS_SYNC_MINUTES=30
+SEED_DEMO_DATA=true
 ```
 
-Stored metrics include views, engaged views, likes, comments, shares, subscribers gained/lost, average view duration, average percentage viewed, engaged-view rate, interaction rate, subscriber conversion rate and a transparent internal performance score.
+Production should normally keep:
 
-The score is only for comparing this factory's own Shorts. It is not presented as YouTube's ranking algorithm. Autopilot uses these internal category scores as one signal for future selection.
+```text
+SEED_DEMO_DATA=false
+```
 
-The public targeted YouTube Analytics API does not expose the YouTube Studio **viewed vs swiped away** card directly, so the factory deliberately leaves that field empty rather than fabricating a value.
+Remove old demo records with:
 
-## Pages
-
-- `/dashboard` control room, Autopilot, counters, pause state, activity and connections
-- `/prompts` built-in prompt bank, filters, mobile CSV import, manual queue action
-- `/queue` production state machine, origin labels and retries
-- `/review` mobile preview, Auto/Manual label, creative plan, approve/regenerate/reject
-- `/schedule` private-default publishing schedule
-- `/analytics` performance cockpit and category winners
-- `/settings` limits, Autopilot targets, channel creation/connection, provider state and safety interlocks
+```bash
+npm run demo:cleanup
+```
 
 ## Production deployment
 
-For a server using a hosted PostgreSQL/Supabase connection in `DATABASE_URL`:
+With a hosted PostgreSQL/Supabase `DATABASE_URL`:
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-The production Compose file binds the web app to `127.0.0.1:3000`, so expose it through a TLS reverse proxy or secure tunnel rather than directly publishing the port.
+The production web container binds to `127.0.0.1:3000`. Put TLS/reverse-proxy or a secure tunnel in front of it.
 
-Run before enabling real providers:
-
-```bash
-npm run doctor
-```
+The worker refuses to start when blocking runtime configuration is invalid.
 
 ## Safe first real run
 
-1. Keep video and publishing providers in mock mode.
-2. Install the 1,000-prompt bank.
-3. Enable Autopilot in mock mode and verify it selects distinct prompts and stops at review.
-4. Verify Telegram Approve/Regenerate/Reject and `/pause`.
-5. Configure Claude + OpenArt while both paid locks remain false.
-6. Run `npm run doctor` and `npm run validate`.
-7. Unlock only `ALLOW_PAID_GENERATION=true` and create **one manual real video**.
-8. Review it from phone/Telegram.
-9. Only after that test, optionally unlock `ALLOW_AUTOPILOT_PAID_GENERATION=true`.
-10. Connect the correct YouTube channel from Settings.
-11. Enable YouTube upload while keeping public publishing locked.
-12. Upload **one PRIVATE test video**.
-13. Verify analytics ingestion.
-14. Only then increase daily targets or enable public publishing.
+1. Prove the full factory in mock mode.
+2. Configure Telegram and test it from `/setup`.
+3. Configure Claude + OpenArt while paid locks stay closed.
+4. Unlock only manual paid generation and render one real video.
+5. Review it manually.
+6. Connect the intended YouTube channel.
+7. Enable YouTube upload while PUBLIC stays locked.
+8. Upload one PRIVATE video.
+9. Verify the publish record and analytics.
+10. Only then consider paid Autopilot or PUBLIC publishing.
 
-## Milestones
+## Pages
 
-1. ✅ Control plane foundation
-2. ✅ Prompt-bank import and production UX
-3. ✅ Claude creative director
-4. ✅ OpenArt MCP provider boundary
-5. ✅ Provider routing and safety locks
-6. ✅ Mobile + Telegram review workflow
-7. ✅ YouTube OAuth + private-first uploader
-8. ✅ Scheduler + publishing provider routing
-9. ✅ YouTube analytics + internal performance scoring
-10. 🚧 Runtime validation and deployment activation
-11. ✅ Analytics-aware Autopilot with independent paid-spend lock
+- `/dashboard` control room + Autopilot + next publishing
+- `/setup` activation wizard
+- `/prompts` prompt bank and import
+- `/queue` production jobs
+- `/review` mobile video quality gate
+- `/schedule` smart/manual scheduling
+- `/analytics` performance cockpit
+- `/settings` limits, channels, providers and safety controls
 
-See `SECURITY.md` before connecting paid or publishing credentials.
+## Project status
+
+Implemented:
+
+- control plane
+- 1,000-prompt bank
+- Claude creative director
+- OpenArt MCP boundary
+- mobile + Telegram review
+- YouTube OAuth/private-first publishing
+- scheduling
+- analytics
+- Autopilot
+- smart scheduling
+- activation wizard
+- production safety hardening
+
+The final external gate is running `npm run verify:mock` and the first real provider/PRIVATE YouTube tests in an environment with Node, Docker, database access, and the operator's secrets.
+
+See `SECURITY.md`, `docs/ACTIVATION_RUNBOOK.md`, and `docs/PHONE_LAUNCH.md` before opening real-provider locks.
