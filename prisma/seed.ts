@@ -25,6 +25,11 @@ async function main() {
     }
   });
 
+  if (process.env.SEED_DEMO_DATA !== 'true') {
+    console.log('Seed complete: core settings + Karzoun Media Lab. Demo data disabled.');
+    return;
+  }
+
   const demoPrompt = await prisma.prompt.upsert({
     where: { externalPromptId: 'DEMO-0001' },
     update: {},
@@ -56,7 +61,7 @@ async function main() {
     });
   }
 
-  console.log('Seed complete: Karzoun Media Lab + clearly marked demo workflow.');
+  console.log('Seed complete: core settings + Karzoun Media Lab + explicitly enabled demo workflow.');
 }
 
 main()
