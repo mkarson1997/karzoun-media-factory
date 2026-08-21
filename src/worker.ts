@@ -12,6 +12,13 @@ let stopping = false;
 let lastAnalyticsSyncAt = 0;
 let lastAutopilotTickAt = 0;
 
+function autopilotExecutionBlocked(job: { origin: string; provider: string }) {
+  const isAutopilot = job.origin === 'AUTOPILOT';
+  const isMock = job.provider === 'mock' || job.provider === 'mock-demo';
+  if (!isAutopilot || isMock) return false;
+  return process.env.ALLOW_PAID_GENERATION !== 'true' || process.env.ALLOW_AUTOPILOT_PAID_GENERATION !== 'true';
+}
+
 async function prepareCreativePlan(job: { id: string; requestedDuration: number; creativeBrief: Prisma.JsonValue | null; prompt: { externalPromptId: string; category: string; concept: string; fullPrompt: string; channelType: 'GENERAL' | 'KIDS_CHANNEL_ONLY' } }) {
   if (job.creativeBrief) return job.creativeBrief as unknown as CreativePlan;
 
@@ -104,6 +111,11 @@ async function startOneGeneration() {
     orderBy: { createdAt: 'asc' }
   });
   if (!queued) return false;
+
+  // Re-check the automatic spending lock immediately before execution. This
+  // protects already-queued Autopilot jobs if the operator closes the lock
+  // after selection but before the worker reaches them.
+  if (autopilotExecutionBlocked(queued)) return false;
 
   const claimed = await claimJobTransition(queued.id, 'QUEUED', 'GENERATING', 'worker');
   if (!claimed) return true;
