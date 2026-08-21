@@ -12,7 +12,7 @@ export async function notifyReviewReady(input: {
   const allowedUserId = process.env.TELEGRAM_ALLOWED_USER_ID;
   if (!token || !allowedUserId) return false;
 
-  const baseUrl = process.env.APP_BASE_URL ?? 'http://localhost:3000';
+  const baseUrl = process.env.APP_BASE_URL ?? 'http://localhost:3100';
   const concept = input.concept.length <= 120 ? input.concept : `${input.concept.slice(0, 119)}…`;
   const bot = new Telegraf(token);
   const keyboard = Markup.inlineKeyboard([
