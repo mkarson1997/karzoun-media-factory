@@ -19,10 +19,18 @@ APP_SECRET=
 
 `APP_SECRET` is also the operator password used by the private dashboard login. The script keeps every paid/publishing safety lock closed.
 
+The local host port defaults to 3100 so port 3000 can remain available to other projects:
+
+```text
+KMF_PORT=3100
+APP_BASE_URL=http://localhost:3100
+```
+
 For the first local run keep:
 
 ```text
-APP_BASE_URL=http://localhost:3000
+KMF_PORT=3100
+APP_BASE_URL=http://localhost:3100
 SEED_DEMO_DATA=false
 CREATIVE_DIRECTOR=mock
 VIDEO_PROVIDER=mock
@@ -32,6 +40,8 @@ PUBLISHING_PROVIDER=mock
 ALLOW_YOUTUBE_UPLOAD=false
 ALLOW_PUBLIC_PUBLISHING=false
 ```
+
+If you intentionally choose another local port later, change both `KMF_PORT` and `APP_BASE_URL` to the same host port.
 
 ## 2. Telegram
 
@@ -153,11 +163,13 @@ Enable:
 
 Configure the OAuth consent screen, then create an OAuth client of type `Web application`.
 
-For local testing add this exact authorized redirect URI:
+For local testing with the default Karzoun port add this exact authorized redirect URI:
 
 ```text
-http://localhost:3000/api/youtube/callback
+http://localhost:3100/api/youtube/callback
 ```
+
+If you change `KMF_PORT`, use the matching `APP_BASE_URL` callback instead.
 
 For a deployed HTTPS factory use:
 
@@ -174,7 +186,7 @@ YOUTUBE_CLIENT_SECRET=
 
 Do not manually create or paste a YouTube refresh token. Start the factory, open `/setup` or `/settings`, and press `Connect YouTube` for each factory channel. The app performs OAuth and stores the refresh token encrypted with `APP_SECRET`.
 
-If the authorized Google account exposes more than one owned YouTube channel, the factory now shows an explicit channel picker instead of silently binding the first result. This is important when Karzoun Media Lab and the kids channel are under the same Google account.
+If the authorized Google account exposes more than one owned YouTube channel, the factory shows an explicit channel picker instead of silently binding the first result. This is important when Karzoun Media Lab and the kids channel are under the same Google account.
 
 First real upload settings:
 
