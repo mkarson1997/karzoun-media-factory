@@ -25,6 +25,11 @@ export async function POST(request: NextRequest) {
     const publishAt = input.publishLocal
       ? localDateTimeToUtc(input.publishLocal, input.timezone)
       : new Date(input.publishAt!);
+
+    if (publishAt.getTime() < Date.now() + 5 * 60_000) {
+      throw new Error('Publish time must be at least 5 minutes in the future');
+    }
+
     const job = await scheduleApprovedJob(input.jobId, {
       publishAt,
       timezone: input.timezone,
