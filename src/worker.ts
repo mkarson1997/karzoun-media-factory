@@ -6,6 +6,7 @@ import { getCreativeDirector, type CreativePlan } from './lib/creative-director'
 import { evaluateCreativeQuality } from './lib/creative-quality';
 import { getPublishingProvider, getVideoGenerationProvider } from './lib/providers';
 import { createTelegramBot, notifyOperator } from './lib/telegram';
+import { notifyReviewReady } from './lib/telegram-review';
 import { syncPublishedAnalytics } from './lib/youtube-analytics';
 
 let stopping = false;
@@ -87,7 +88,14 @@ async function pollOneMockGeneration() {
       });
       const claimed = await claimJobTransition(generating.id, 'GENERATING', 'READY_FOR_REVIEW', 'worker');
       if (claimed) {
-        await notifyOperator(`🎬 ${generating.prompt.externalPromptId} is ready for review.\nUse /review in Telegram or open the dashboard.`).catch(() => undefined);
+        await notifyReviewReady({
+          jobId: generating.id,
+          externalPromptId: generating.prompt.externalPromptId,
+          concept: generating.prompt.concept,
+          durationSeconds: generating.requestedDuration,
+          provider: generating.provider,
+          origin: generating.origin
+        }).catch(() => undefined);
       }
     }
     return true;
@@ -138,7 +146,14 @@ async function startOneGeneration() {
     if (result.status === 'READY_FOR_REVIEW') {
       const ready = await claimJobTransition(queued.id, 'GENERATING', 'READY_FOR_REVIEW', 'worker');
       if (ready) {
-        await notifyOperator(`🎬 ${queued.prompt.externalPromptId} is ready for review.\nUse /review in Telegram or open the dashboard.`).catch(() => undefined);
+        await notifyReviewReady({
+          jobId: queued.id,
+          externalPromptId: queued.prompt.externalPromptId,
+          concept: queued.prompt.concept,
+          durationSeconds: queued.requestedDuration,
+          provider: queued.provider,
+          origin: queued.origin
+        }).catch(() => undefined);
       }
     }
     return true;
