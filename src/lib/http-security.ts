@@ -24,6 +24,8 @@ export function safeError(error: unknown) {
       'Regeneration is only available',
       'Smart scheduling requires',
       'Invalid publish date or timezone',
+      'Worker-owned production state',
+      'Live provider state is worker-owned',
       'YouTube is not connected',
       'YouTube OAuth requires',
       'YouTube uploads are locked',
