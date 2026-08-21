@@ -1,7 +1,8 @@
 import { ChannelType, JobStatus } from '@prisma/client';
 import { prisma } from '../src/lib/prisma';
-import { attachGeneratedMedia, claimJobTransition, queuePrompt, scheduleApprovedJob, transitionJob } from '../src/lib/control-plane';
+import { attachGeneratedMedia, claimJobTransition, queuePrompt, transitionJob } from '../src/lib/control-plane';
 import { getPublishingProvider, getVideoGenerationProvider } from '../src/lib/providers';
+import { approveAndSmartSchedule } from '../src/lib/smart-scheduler';
 
 function assertSafeMockEnvironment() {
   const video = process.env.VIDEO_PROVIDER || 'mock';
@@ -78,15 +79,18 @@ async function main() {
     const ready = await claimJobTransition(queued.id, 'GENERATING', 'READY_FOR_REVIEW', 'smoke-test');
     if (!ready) throw new Error('Could not move mock render to READY_FOR_REVIEW');
 
-    await transitionJob(queued.id, 'APPROVED', { actor: 'smoke-test', source: 'DASHBOARD' });
-    await scheduleApprovedJob(queued.id, {
-      publishAt: new Date(Date.now() - 1000),
-      timezone: 'UTC',
-      visibility: 'PRIVATE',
-      title: 'Karzoun Media Factory Smoke Test',
-      description: 'Mock-only smoke test. No real upload.',
-      hashtags: ['#SmokeTest']
-    }, 'smoke-test');
+    const smart = await approveAndSmartSchedule(queued.id, { actor: 'smoke-test', source: 'DASHBOARD' });
+    if (smart.visibility !== 'PRIVATE') throw new Error(`Safe mock smart schedule expected PRIVATE visibility, got ${smart.visibility}`);
+    const scheduled = await prisma.publishSchedule.findUnique({ where: { jobId: queued.id } });
+    if (!scheduled || scheduled.status !== 'PENDING') throw new Error('Smart scheduler did not create a pending publish schedule');
+    if (scheduled.publishAt.getTime() <= Date.now()) throw new Error('Smart scheduler did not choose a future publish slot');
+
+    // Move only the temporary smoke schedule into the past so the script can
+    // exercise publishing immediately without waiting for the recommended slot.
+    await prisma.publishSchedule.update({
+      where: { jobId: queued.id },
+      data: { publishAt: new Date(Date.now() - 1000) }
+    });
 
     const publishing = await getPublishingProvider('mock');
     const publishingClaim = await claimJobTransition(queued.id, 'SCHEDULED', 'PUBLISHING', 'smoke-test');
@@ -117,7 +121,8 @@ async function main() {
     if (final.schedule?.status !== 'COMPLETED') throw new Error('Mock publish schedule did not complete');
 
     console.log('PASS  Karzoun Media Factory mock end-to-end smoke test');
-    console.log(`PASS  ${externalPromptId}: QUEUED → GENERATING → READY_FOR_REVIEW → APPROVED → SCHEDULED → PUBLISHING → PUBLISHED`);
+    console.log(`PASS  ${externalPromptId}: QUEUED → GENERATING → READY_FOR_REVIEW → APPROVE+SMART-SCHEDULE → PUBLISHING → PUBLISHED`);
+    console.log(`PASS  Smart scheduler selected ${smart.localLabel} (${smart.timezone}) via ${smart.source}`);
     console.log('PASS  No paid provider, Telegram notification or real YouTube publishing was allowed');
   } finally {
     if (jobId) await prisma.productionJob.deleteMany({ where: { id: jobId } }).catch(() => undefined);
