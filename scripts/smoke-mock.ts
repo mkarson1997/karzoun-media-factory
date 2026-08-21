@@ -8,6 +8,9 @@ function assertSafeMockEnvironment() {
   const publishing = process.env.PUBLISHING_PROVIDER || 'mock';
   if (video !== 'mock' && video !== 'mock-demo') throw new Error(`Smoke test refuses non-mock VIDEO_PROVIDER=${video}`);
   if (publishing !== 'mock') throw new Error(`Smoke test refuses non-mock PUBLISHING_PROVIDER=${publishing}`);
+  if (process.env.ALLOW_PAID_GENERATION === 'true' || process.env.ALLOW_AUTOPILOT_PAID_GENERATION === 'true') {
+    throw new Error('Smoke test refuses to run while any paid-generation lock is open');
+  }
   if (process.env.ALLOW_YOUTUBE_UPLOAD === 'true' || process.env.ALLOW_PUBLIC_PUBLISHING === 'true') {
     throw new Error('Smoke test refuses to run while any real YouTube publishing lock is open');
   }
@@ -25,13 +28,19 @@ async function main() {
   const settings = await prisma.appSettings.upsert({ where: { id: 'singleton' }, update: {}, create: { id: 'singleton' } });
   const originalProductionLimit = settings.dailyProductionLimit;
   const originalPublishingLimit = settings.dailyPublishingLimit;
+  const originalProductionPaused = settings.productionPaused;
+  const originalPublishingPaused = settings.publishingPaused;
+  const originalAutopilotEnabled = settings.autopilotEnabled;
 
   try {
+    // Hold both background lanes while the smoke script drives the state machine
+    // directly. This prevents a concurrently running worker from racing the test.
     await prisma.appSettings.update({
       where: { id: 'singleton' },
       data: {
-        productionPaused: false,
-        publishingPaused: false,
+        productionPaused: true,
+        publishingPaused: true,
+        autopilotEnabled: false,
         dailyProductionLimit: Math.max(originalProductionLimit, 50),
         dailyPublishingLimit: Math.max(originalPublishingLimit, 20)
       }
@@ -109,13 +118,19 @@ async function main() {
 
     console.log('PASS  Karzoun Media Factory mock end-to-end smoke test');
     console.log(`PASS  ${externalPromptId}: QUEUED → GENERATING → READY_FOR_REVIEW → APPROVED → SCHEDULED → PUBLISHING → PUBLISHED`);
-    console.log('PASS  No paid provider or real YouTube publishing was allowed');
+    console.log('PASS  No paid provider, Telegram notification or real YouTube publishing was allowed');
   } finally {
     if (jobId) await prisma.productionJob.deleteMany({ where: { id: jobId } }).catch(() => undefined);
     if (promptId) await prisma.prompt.deleteMany({ where: { id: promptId } }).catch(() => undefined);
     await prisma.appSettings.update({
       where: { id: 'singleton' },
-      data: { dailyProductionLimit: originalProductionLimit, dailyPublishingLimit: originalPublishingLimit }
+      data: {
+        dailyProductionLimit: originalProductionLimit,
+        dailyPublishingLimit: originalPublishingLimit,
+        productionPaused: originalProductionPaused,
+        publishingPaused: originalPublishingPaused,
+        autopilotEnabled: originalAutopilotEnabled
+      }
     }).catch(() => undefined);
     await prisma.$disconnect();
   }
