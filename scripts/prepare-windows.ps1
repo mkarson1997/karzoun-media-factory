@@ -10,6 +10,10 @@ function Assert-Command([string]$Name, [string]$Help) {
     }
 }
 
+function Assert-LastExit([string]$Message) {
+    if ($LASTEXITCODE -ne 0) { throw $Message }
+}
+
 function New-HexSecret([int]$Bytes = 32) {
     $buffer = New-Object byte[] $Bytes
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -17,8 +21,16 @@ function New-HexSecret([int]$Bytes = 32) {
     return ([System.BitConverter]::ToString($buffer)).Replace('-', '').ToLowerInvariant()
 }
 
+function Read-DotEnvLines([string]$Path) {
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    if (Test-Path $Path) {
+        foreach ($line in Get-Content $Path) { [void]$lines.Add([string]$line) }
+    }
+    return $lines
+}
+
 function Set-DotEnvValue([string]$Path, [string]$Key, [string]$Value, [switch]$OnlyIfBlank) {
-    $lines = if (Test-Path $Path) { [System.Collections.Generic.List[string]](Get-Content $Path) } else { [System.Collections.Generic.List[string]]::new() }
+    $lines = Read-DotEnvLines $Path
     $index = -1
     for ($i = 0; $i -lt $lines.Count; $i++) {
         if ($lines[$i] -match ('^' + [regex]::Escape($Key) + '=')) { $index = $i; break }
@@ -29,7 +41,7 @@ function Set-DotEnvValue([string]$Path, [string]$Key, [string]$Value, [switch]$O
         if ($OnlyIfBlank -and -not [string]::IsNullOrWhiteSpace($current)) { return }
         $lines[$index] = "$Key=$Value"
     } else {
-        $lines.Add("$Key=$Value")
+        [void]$lines.Add("$Key=$Value")
     }
     Set-Content -Path $Path -Value $lines -Encoding UTF8
 }
@@ -40,7 +52,10 @@ Write-Host "This starts MOCK mode only. It will not spend provider credits or up
 Assert-Command 'git' 'Install Git for Windows first.'
 Assert-Command 'docker' 'Install and start Docker Desktop first.'
 
-try { docker compose version | Out-Null } catch { throw 'Docker Compose v2 is required. Start/update Docker Desktop.' }
+docker compose version | Out-Null
+Assert-LastExit 'Docker Compose v2 is required. Start/update Docker Desktop.'
+docker info | Out-Null
+Assert-LastExit 'Docker Desktop is installed but its engine is not running.'
 
 $envPath = Join-Path $repoRoot '.env'
 $examplePath = Join-Path $repoRoot '.env.example'
@@ -55,7 +70,8 @@ Set-DotEnvValue $envPath 'APP_BASE_URL' 'http://localhost:3000' -OnlyIfBlank
 Set-DotEnvValue $envPath 'SEED_DEMO_DATA' 'false' -OnlyIfBlank
 Set-DotEnvValue $envPath 'ANTHROPIC_MODEL' 'claude-opus-5' -OnlyIfBlank
 
-# Safe launch interlocks. We intentionally overwrite these on the first bootstrap.
+# First boot is forcibly safe. Real-provider settings are enabled only later,
+# after the mock acceptance test and operator review.
 Set-DotEnvValue $envPath 'CREATIVE_DIRECTOR' 'mock'
 Set-DotEnvValue $envPath 'VIDEO_PROVIDER' 'mock'
 Set-DotEnvValue $envPath 'ALLOW_PAID_GENERATION' 'false'
@@ -66,9 +82,11 @@ Set-DotEnvValue $envPath 'ALLOW_PUBLIC_PUBLISHING' 'false'
 
 Write-Host 'Validating Docker Compose configuration...'
 docker compose config | Out-Null
+Assert-LastExit 'docker compose config failed. Check .env and Docker Compose syntax.'
 
 Write-Host 'Building and starting the safe local stack...'
 docker compose up -d --build
+Assert-LastExit 'Docker build/start failed. Run docker compose logs --tail=200 app worker db.'
 
 $deadline = (Get-Date).AddMinutes(4)
 $healthy = $false
@@ -83,7 +101,7 @@ while ((Get-Date) -lt $deadline) {
 if (-not $healthy) {
     Write-Host "`nThe stack started but health did not become ready in time." -ForegroundColor Yellow
     Write-Host 'Run: docker compose ps'
-    Write-Host 'Then: docker compose logs --tail=200 app worker'
+    Write-Host 'Then: docker compose logs --tail=200 app worker db'
     exit 1
 }
 
