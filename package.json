@@ -17,6 +17,7 @@
     "prompts:generate": "tsx scripts/generate-prompt-bank.ts",
     "prompts:bootstrap": "npm run prompts:generate && npm run import:prompts -- ./data/Karzoun_Media_Lab_1000_Shorts_Prompts.csv",
     "import:prompts": "tsx scripts/import-prompts.ts",
+    "demo:cleanup": "tsx scripts/cleanup-demo.ts",
     "seed": "tsx prisma/seed.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
