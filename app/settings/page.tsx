@@ -2,6 +2,7 @@ import { prisma } from '@/src/lib/prisma';
 import { SettingsForm } from '@/app/components/SettingsForm';
 import { ChannelForm } from '@/app/components/ChannelForm';
 import { ApiActionButton } from '@/app/components/ApiActionButton';
+import { LogoutForm } from '@/app/components/LogoutForm';
 import { getYouTubeConnectionStatus } from '@/src/lib/youtube-auth';
 import { getAutopilotStatus } from '@/src/lib/autopilot';
 
@@ -43,6 +44,7 @@ export default async function SettingsPage() {
         <div className="eyebrow">CONFIGURATION</div>
         <h1>Settings</h1>
         <p>Operational settings live here. Each factory channel can have its own encrypted YouTube OAuth connection.</p>
+        <div className="hero-actions"><a className="button secondary" href="/setup">🚀 Launch wizard</a><LogoutForm /></div>
       </section>
 
       <section className="card">
