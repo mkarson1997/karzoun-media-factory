@@ -1,4 +1,5 @@
 import { Markup, Telegraf, type Context } from 'telegraf';
+import { getAutopilotStatus, runAutopilotTick, setAutopilotEnabled } from './autopilot';
 import { getFactoryCounters, listJobs, requestRegeneration, transitionJob } from './control-plane';
 import { prisma } from './prisma';
 
@@ -39,6 +40,13 @@ async function setFactoryPause(productionPaused: boolean, publishingPaused: bool
   return settings;
 }
 
+function autopilotText(status: Awaited<ReturnType<typeof getAutopilotStatus>>) {
+  const mode = status.enabled ? 'ARMED' : 'OFF';
+  const kids = status.kidsEnabled ? `${status.rolling24h.kidsQueued}/${status.rolling24h.kidsTarget}` : 'OFF';
+  const safety = status.safetyBlock ? `\n⚠️ ${status.safetyBlock}` : '';
+  return `🤖 Autopilot: ${mode}\nGeneral: ${status.rolling24h.generalQueued}/${status.rolling24h.generalTarget} in rolling 24h\nKids: ${kids}\nGlobal jobs: ${status.rolling24h.totalJobs}/${status.rolling24h.globalLimit}\nUnused prompts: ${status.unused.general} general · ${status.unused.kids} kids${safety}\n\nAutopilot chooses unused ideas and learns from category performance. Every generated video still waits for your review.`;
+}
+
 export async function notifyOperator(text: string) {
   const { token, allowedUserId } = telegramConfig();
   if (!token || !allowedUserId) return false;
@@ -63,22 +71,40 @@ export function createTelegramBot() {
 
   bot.start(async (ctx) => {
     await ctx.reply(
-      '🏭 Karzoun Media Factory is online.\n\n/status — factory counters\n/queue — latest jobs\n/review — videos waiting for review\n/analytics — latest performance\n/pause — stop generation + publishing\n/resume — resume factory\n/help — commands',
+      '🏭 Karzoun Media Factory is online.\n\n/status — factory counters\n/autopilot — automatic idea production\n/queue — latest jobs\n/review — videos waiting for review\n/analytics — latest performance\n/pause — stop generation + publishing\n/resume — resume factory\n/help — commands',
       Markup.inlineKeyboard([[Markup.button.url('Open Dashboard', `${baseUrl}/dashboard`)]])
     );
   });
 
   bot.command('status', async (ctx) => {
     try {
-      const [c, settings] = await Promise.all([
+      const [c, settings, autopilot] = await Promise.all([
         getFactoryCounters(),
-        prisma.appSettings.findUnique({ where: { id: 'singleton' } })
+        prisma.appSettings.findUnique({ where: { id: 'singleton' } }),
+        getAutopilotStatus()
       ]);
       const production = settings?.productionPaused ? 'PAUSED' : 'RUNNING';
       const publishing = settings?.publishingPaused ? 'PAUSED' : 'RUNNING';
-      await ctx.reply(`🏭 Factory status\n\nProduction: ${production}\nPublishing: ${publishing}\n\nQueued: ${c.QUEUED}\nGenerating: ${c.GENERATING}\nReady for review: ${c.READY_FOR_REVIEW}\nApproved: ${c.APPROVED}\nScheduled: ${c.SCHEDULED}\nPublished: ${c.PUBLISHED}\nFailed: ${c.FAILED}`);
+      await ctx.reply(`🏭 Factory status\n\nProduction: ${production}\nPublishing: ${publishing}\nAutopilot: ${autopilot.enabled ? 'ARMED' : 'OFF'}\n\nQueued: ${c.QUEUED}\nGenerating: ${c.GENERATING}\nReady for review: ${c.READY_FOR_REVIEW}\nApproved: ${c.APPROVED}\nScheduled: ${c.SCHEDULED}\nPublished: ${c.PUBLISHED}\nFailed: ${c.FAILED}`);
     } catch {
       await ctx.reply('Database is not ready yet.');
+    }
+  });
+
+  bot.command('autopilot', async (ctx) => {
+    try {
+      const status = await getAutopilotStatus();
+      await ctx.reply(
+        autopilotText(status),
+        Markup.inlineKeyboard([
+          status.enabled
+            ? [Markup.button.callback('⏹ Disable autopilot', 'autopilot:disable')]
+            : [Markup.button.callback('🤖 Enable general autopilot', 'autopilot:enable')],
+          [Markup.button.callback('⚡ Queue next safe idea', 'autopilot:tick'), Markup.button.url('Autopilot settings', `${baseUrl}/settings`)]
+        ])
+      );
+    } catch {
+      await ctx.reply('Could not read autopilot status.');
     }
   });
 
@@ -158,7 +184,46 @@ export function createTelegramBot() {
   });
 
   bot.command('help', async (ctx) => {
-    await ctx.reply('/status — factory counters and pause state\n/queue — latest jobs\n/review — approve, regenerate or reject\n/analytics — latest performance\n/pause — pause generation + publishing\n/resume — resume factory\n/help — commands');
+    await ctx.reply('/status — factory counters and pause state\n/autopilot — automatic idea selection and production\n/queue — latest jobs\n/review — approve, regenerate or reject\n/analytics — latest performance\n/pause — pause generation + publishing\n/resume — resume factory\n/help — commands');
+  });
+
+  bot.action('autopilot:enable', async (ctx) => {
+    try {
+      await setAutopilotEnabled(true, `telegram:${allowedUserId}`);
+      const result = await runAutopilotTick();
+      await ctx.answerCbQuery('Autopilot enabled');
+      if (result.status === 'queued') {
+        await ctx.reply(`🤖 Autopilot enabled and queued ${result.externalPromptId} (${result.category}). It will still stop at review.`);
+      } else {
+        await ctx.reply(`🤖 Autopilot enabled. ${result.reason}`);
+      }
+    } catch {
+      await ctx.answerCbQuery('Could not enable autopilot', { show_alert: true });
+    }
+  });
+
+  bot.action('autopilot:disable', async (ctx) => {
+    try {
+      await setAutopilotEnabled(false, `telegram:${allowedUserId}`);
+      await ctx.answerCbQuery('Autopilot disabled');
+      await ctx.reply('⏹ Autopilot disabled. Existing queued/review jobs are kept.');
+    } catch {
+      await ctx.answerCbQuery('Could not disable autopilot', { show_alert: true });
+    }
+  });
+
+  bot.action('autopilot:tick', async (ctx) => {
+    try {
+      const result = await runAutopilotTick();
+      await ctx.answerCbQuery(result.status === 'queued' ? 'Queued' : 'No job queued');
+      if (result.status === 'queued') {
+        await ctx.reply(`⚡ Queued ${result.externalPromptId}\n${result.category} · ${result.channelType}\nSelection score: ${result.selectionScore}`);
+      } else {
+        await ctx.reply(`Autopilot: ${result.reason}`);
+      }
+    } catch {
+      await ctx.answerCbQuery('Autopilot tick failed', { show_alert: true });
+    }
   });
 
   bot.action(/^approve:(.+)$/, async (ctx) => {
