@@ -22,7 +22,12 @@ export async function POST(request: NextRequest) {
         action: 'PROMPTS_IMPORTED',
         entityType: 'PromptLibrary',
         entityId: 'library',
-        metadata: summary
+        metadata: {
+          imported: summary.imported,
+          updated: summary.updated,
+          rejected: summary.rejected,
+          total: summary.total
+        }
       }
     });
     return NextResponse.json({ ok: true, summary });
