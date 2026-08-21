@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from './lib/prisma';
 import { attachGeneratedMedia, claimJobTransition, transitionJob } from './lib/control-plane';
 import { getCreativeDirector, type CreativePlan } from './lib/creative-director';
+import { evaluateCreativeQuality } from './lib/creative-quality';
 import { getPublishingProvider, getVideoGenerationProvider } from './lib/providers';
 import { createTelegramBot, notifyOperator } from './lib/telegram';
 import { syncPublishedAnalytics } from './lib/youtube-analytics';
@@ -22,6 +23,14 @@ async function prepareCreativePlan(job: { id: string; requestedDuration: number;
     channelType: job.prompt.channelType
   });
 
+  const quality = evaluateCreativeQuality(result.plan, {
+    durationSeconds: job.requestedDuration,
+    channelType: job.prompt.channelType
+  });
+  if (result.model !== 'mock-creative-director' && quality.blocking.length) {
+    throw new Error(`Creative quality gate blocked rendering: ${quality.blocking.join('; ')}`);
+  }
+
   await prisma.productionJob.update({
     where: { id: job.id },
     data: {
@@ -34,7 +43,18 @@ async function prepareCreativePlan(job: { id: string; requestedDuration: number;
     }
   });
   await prisma.activityLog.create({
-    data: { actor: 'creative-director', action: 'CREATIVE_PLAN_PREPARED', entityType: 'ProductionJob', entityId: job.id, metadata: { model: result.model } }
+    data: {
+      actor: 'creative-director',
+      action: 'CREATIVE_PLAN_PREPARED',
+      entityType: 'ProductionJob',
+      entityId: job.id,
+      metadata: {
+        model: result.model,
+        qualityScore: quality.score,
+        qualityWarnings: quality.warnings,
+        qualityBlocking: quality.blocking
+      }
+    }
   });
   return result.plan;
 }
