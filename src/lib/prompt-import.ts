@@ -56,14 +56,27 @@ export function validatePromptCsv(csvText: string): PromptCsvRow[] {
   return valid;
 }
 
+function chunks<T>(items: T[], size: number) {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
+  return result;
+}
+
 export async function importPromptCsv(prisma: PrismaClient, csvText: string): Promise<PromptImportSummary> {
   const rows = validatePromptCsv(csvText);
-  let imported = 0;
-  let updated = 0;
+  if (!rows.length) return { imported: 0, updated: 0, rejected: 0, total: 0 };
 
-  for (const row of rows) {
-    const existing = await prisma.prompt.findUnique({ where: { externalPromptId: row.id }, select: { id: true } });
-    await prisma.prompt.upsert({
+  const ids = rows.map((row) => row.id);
+  const existingRows = await prisma.prompt.findMany({
+    where: { externalPromptId: { in: ids } },
+    select: { externalPromptId: true }
+  });
+  const existing = new Set(existingRows.map((row) => row.externalPromptId));
+
+  // Bounded parallel chunks make the 1,000-prompt phone bootstrap much faster
+  // over hosted Postgres without flooding a small connection pool.
+  for (const batch of chunks(rows, 20)) {
+    await Promise.all(batch.map((row) => prisma.prompt.upsert({
       where: { externalPromptId: row.id },
       create: {
         externalPromptId: row.id,
@@ -79,11 +92,13 @@ export async function importPromptCsv(prisma: PrismaClient, csvText: string): Pr
         concept: row.concept,
         fullPrompt: row.prompt,
         targetDurationSeconds: row.duration_seconds,
-        channelType: ChannelType[row.channel]
+        channelType: ChannelType[row.channel],
+        active: true
       }
-    });
-    existing ? updated++ : imported++;
+    })));
   }
 
+  const updated = rows.filter((row) => existing.has(row.id)).length;
+  const imported = rows.length - updated;
   return { imported, updated, rejected: 0, total: rows.length };
 }
