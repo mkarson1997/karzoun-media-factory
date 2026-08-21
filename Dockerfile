@@ -8,8 +8,9 @@ COPY prisma ./prisma
 RUN npm install --include=dev
 
 COPY . .
-RUN npx prisma generate && npm run build
+RUN npx prisma generate && npm run build && chown -R node:node /app
 
 ENV NODE_ENV=production
+USER node
 EXPOSE 3000
 CMD ["npm", "start"]
