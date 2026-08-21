@@ -6,24 +6,30 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const config = readinessSummary(evaluateRuntimeSafety(process.env));
-  let database = { ok: false, detail: 'unavailable' };
+  let databaseReady = false;
 
   try {
     await prisma.$queryRaw`SELECT 1`;
-    database = { ok: true, detail: 'ready' };
+    databaseReady = true;
   } catch {
-    database = { ok: false, detail: 'unavailable' };
+    databaseReady = false;
   }
 
-  const ready = config.ready && database.ok;
+  const ready = config.ready && databaseReady;
+  const status = ready ? 200 : 503;
+
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ ok: ready, service: 'karzoun-media-factory' }, { status });
+  }
+
   return NextResponse.json({
     ok: ready,
     service: 'karzoun-media-factory',
-    database,
+    database: { ok: databaseReady },
     config: {
       ready: config.ready,
       blocking: config.blocking.map((item) => ({ name: item.name, detail: item.detail })),
       warnings: config.warnings.map((item) => ({ name: item.name, detail: item.detail }))
     }
-  }, { status: ready ? 200 : 503 });
+  }, { status });
 }
