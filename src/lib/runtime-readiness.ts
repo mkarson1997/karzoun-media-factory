@@ -19,6 +19,7 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
   const videoProvider = env.VIDEO_PROVIDER || 'mock';
   const publishingProvider = env.PUBLISHING_PROVIDER || 'mock';
   const paid = env.ALLOW_PAID_GENERATION === 'true';
+  const autopilotPaid = env.ALLOW_AUTOPILOT_PAID_GENERATION === 'true';
   const uploads = env.ALLOW_YOUTUBE_UPLOAD === 'true';
   const publicPublishing = env.ALLOW_PUBLIC_PUBLISHING === 'true';
   const appSecretLength = env.APP_SECRET?.length ?? 0;
@@ -65,6 +66,13 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
       detail: `provider=${videoProvider}`
     });
   }
+
+  checks.push({
+    name: 'Autopilot paid generation interlock',
+    ok: !autopilotPaid || (paid && videoProvider !== 'mock' && videoProvider !== 'mock-demo'),
+    severity: 'required',
+    detail: autopilotPaid ? 'automatic paid generation explicitly unlocked' : 'automatic paid generation locked'
+  });
 
   if (publishingProvider === 'youtube') {
     checks.push({
