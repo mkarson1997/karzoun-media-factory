@@ -21,6 +21,7 @@ export function safeError(error: unknown) {
       'Cross-origin mutation rejected',
       'Daily production limit reached',
       'Daily publishing limit reached',
+      'Publish time must be at least',
       'Regeneration is only available',
       'Smart scheduling requires',
       'Invalid publish date or timezone',
