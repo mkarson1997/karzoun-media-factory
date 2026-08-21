@@ -64,9 +64,6 @@ export function rankAutopilotCandidates(
       const sampleCount = stat?.count ?? 0;
       const recentUses = recentCounts.get(candidate.category) ?? 0;
 
-      // Start unexplored categories near the middle so the factory still explores.
-      // Categories with real results gradually win, while a recency penalty avoids
-      // generating the same theme repeatedly in one batch.
       const performanceBase = average ?? 55;
       const explorationBonus = sampleCount === 0 ? 6 : sampleCount < 3 ? 3 : 0;
       const recencyPenalty = recentUses * 8;
@@ -86,8 +83,12 @@ export function rankAutopilotCandidates(
 function generationSafetyBlock() {
   const provider = process.env.VIDEO_PROVIDER || 'mock';
   const isMock = provider === 'mock' || provider === 'mock-demo';
-  if (!isMock && process.env.ALLOW_PAID_GENERATION !== 'true') {
-    return `Autopilot is armed but paid generation is locked for provider ${provider}`;
+  if (isMock) return null;
+  if (process.env.ALLOW_PAID_GENERATION !== 'true') {
+    return `Paid generation is locked for provider ${provider}`;
+  }
+  if (process.env.ALLOW_AUTOPILOT_PAID_GENERATION !== 'true') {
+    return 'Paid generation is available manually, but the separate autopilot spending lock is still closed';
   }
   return null;
 }
@@ -142,7 +143,6 @@ export async function runAutopilotTick(): Promise<AutopilotTickResult> {
   if (safety) return { status: 'blocked', reason: safety };
 
   return prisma.$transaction(async (tx) => {
-    // Prevent two workers from filling the same daily slot at the same time.
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(${ADVISORY_LOCK_ID})`;
 
     const settings = await tx.appSettings.findUnique({ where: { id: 'singleton' } });
