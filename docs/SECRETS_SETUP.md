@@ -43,6 +43,18 @@ ALLOW_PUBLIC_PUBLISHING=false
 
 If you intentionally choose another local port later, change both `KMF_PORT` and `APP_BASE_URL` to the same host port.
 
+### Important: reloading `.env`
+
+`docker compose restart` restarts the existing containers with their existing environment. It does **not** reliably reload newly edited values from `.env` into already-created containers.
+
+After changing Telegram, Claude, OpenArt, YouTube, or any other `.env` value, use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\reload-env.ps1
+```
+
+That recreates only `app` and `worker`, preserves the PostgreSQL volume, waits for health, and loads the new environment values.
+
 ## 2. Telegram
 
 Official setup:
@@ -72,7 +84,13 @@ $token = 'PASTE_YOUR_BOT_TOKEN_HERE'
 TELEGRAM_ALLOWED_USER_ID=
 ```
 
-4. Restart the containers and use `/setup` -> `Test Telegram`.
+4. Save `.env`, then reload the environment into the containers:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\reload-env.ps1
+```
+
+5. Open `/settings` and press `Send test notification`.
 
 Treat the bot token as a password. If it is ever exposed, revoke/regenerate it in BotFather.
 
@@ -92,6 +110,8 @@ For real creative planning change:
 ```text
 CREATIVE_DIRECTOR=anthropic
 ```
+
+After editing `.env`, run `scripts/reload-env.ps1` so the app and worker receive the new values.
 
 A Claude web/desktop subscription and Claude API billing are separate. Make sure the developer console has usable API credits/billing before testing the real creative director.
 
@@ -141,6 +161,8 @@ ALLOW_PAID_GENERATION=true
 ALLOW_AUTOPILOT_PAID_GENERATION=false
 ```
 
+After editing `.env`, run `scripts/reload-env.ps1`.
+
 The current factory uses the access token you provide. OAuth access tokens can expire; if OpenArt authentication later fails, repeat the OAuth flow to obtain a fresh token before re-enabling production.
 
 Optional:
@@ -183,6 +205,8 @@ Copy the values into `.env`:
 YOUTUBE_CLIENT_ID=
 YOUTUBE_CLIENT_SECRET=
 ```
+
+After editing `.env`, run `scripts/reload-env.ps1`.
 
 Do not manually create or paste a YouTube refresh token. Start the factory, open `/setup` or `/settings`, and press `Connect YouTube` for each factory channel. The app performs OAuth and stores the refresh token encrypted with `APP_SECRET`.
 
