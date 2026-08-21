@@ -10,7 +10,19 @@ const settingsSchema = z.object({
   timezone: z.string().trim().min(1).max(80),
   defaultLanguage: z.string().trim().min(2).max(12),
   dailyProductionLimit: z.number().int().min(1).max(50),
-  dailyPublishingLimit: z.number().int().min(1).max(20)
+  dailyPublishingLimit: z.number().int().min(1).max(20),
+  autopilotEnabled: z.boolean(),
+  autopilotGeneralDailyTarget: z.number().int().min(0).max(20),
+  autopilotKidsEnabled: z.boolean(),
+  autopilotKidsDailyTarget: z.number().int().min(0).max(20)
+}).superRefine((value, ctx) => {
+  if (value.autopilotGeneralDailyTarget + (value.autopilotKidsEnabled ? value.autopilotKidsDailyTarget : 0) > value.dailyProductionLimit) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['dailyProductionLimit'],
+      message: 'Autopilot daily targets cannot exceed the global production limit'
+    });
+  }
 });
 
 export async function GET() {
@@ -24,7 +36,20 @@ export async function POST(request: NextRequest) {
     assertSameOriginMutation(request);
     const input = settingsSchema.parse(await request.json());
     const settings = await prisma.appSettings.upsert({ where: { id: 'singleton' }, update: input, create: { id: 'singleton', ...input } });
-    await prisma.activityLog.create({ data: { actor: 'dashboard', action: 'SETTINGS_UPDATED', entityType: 'AppSettings', entityId: settings.id } });
+    await prisma.activityLog.create({
+      data: {
+        actor: 'dashboard',
+        action: 'SETTINGS_UPDATED',
+        entityType: 'AppSettings',
+        entityId: settings.id,
+        metadata: {
+          autopilotEnabled: settings.autopilotEnabled,
+          autopilotGeneralDailyTarget: settings.autopilotGeneralDailyTarget,
+          autopilotKidsEnabled: settings.autopilotKidsEnabled,
+          autopilotKidsDailyTarget: settings.autopilotKidsDailyTarget
+        }
+      }
+    });
     return NextResponse.json({ ok: true, settings });
   } catch (error) {
     return NextResponse.json({ ok: false, error: safeError(error) }, { status: 400 });
