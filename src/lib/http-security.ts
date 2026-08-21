@@ -22,6 +22,8 @@ export function safeError(error: unknown) {
       'Daily production limit reached',
       'Daily publishing limit reached',
       'Regeneration is only available',
+      'Smart scheduling requires',
+      'Invalid publish date or timezone',
       'YouTube is not connected',
       'YouTube OAuth requires',
       'YouTube uploads are locked',
