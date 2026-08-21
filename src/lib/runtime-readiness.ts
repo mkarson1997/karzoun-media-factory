@@ -9,9 +9,15 @@ function configured(value: string | undefined) {
   return Boolean(value && value.trim());
 }
 
-function httpsUrl(value: string | undefined) {
+function safeBaseUrl(value: string | undefined) {
   if (!value) return false;
-  try { return new URL(value).protocol === 'https:'; } catch { return false; }
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'https:') return true;
+    return url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1');
+  } catch {
+    return false;
+  }
 }
 
 export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): ReadinessCheck[] {
@@ -39,9 +45,11 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
     },
     {
       name: 'APP_BASE_URL',
-      ok: !production || httpsUrl(env.APP_BASE_URL),
+      ok: !production || safeBaseUrl(env.APP_BASE_URL),
       severity: 'required',
-      detail: production ? (httpsUrl(env.APP_BASE_URL) ? 'HTTPS URL configured' : 'production requires HTTPS APP_BASE_URL') : (env.APP_BASE_URL || 'development default')
+      detail: production
+        ? (safeBaseUrl(env.APP_BASE_URL) ? 'HTTPS or loopback-only URL configured' : 'production requires HTTPS APP_BASE_URL, except loopback-only local operation')
+        : (env.APP_BASE_URL || 'development default')
     }
   ];
 
@@ -77,9 +85,9 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
   if (publishingProvider === 'youtube') {
     checks.push({
       name: 'YouTube OAuth client',
-      ok: configured(env.YOUTUBE_CLIENT_ID) && configured(env.YOUTUBE_CLIENT_SECRET) && configured(env.APP_BASE_URL),
+      ok: configured(env.YOUTUBE_CLIENT_ID) && configured(env.YOUTUBE_CLIENT_SECRET) && safeBaseUrl(env.APP_BASE_URL),
       severity: 'required',
-      detail: 'YouTube publishing requires client ID, client secret and APP_BASE_URL'
+      detail: 'YouTube publishing requires client ID, client secret and a safe APP_BASE_URL'
     });
   } else {
     checks.push({
