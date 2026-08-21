@@ -32,6 +32,11 @@ enum JobStatus {
   CANCELLED
 }
 
+enum JobOrigin {
+  MANUAL
+  AUTOPILOT
+}
+
 enum ReviewSource {
   DASHBOARD
   TELEGRAM
@@ -52,16 +57,20 @@ model Operator {
 }
 
 model AppSettings {
-  id                   String   @id @default("singleton")
-  projectName          String   @default("Karzoun Media Factory")
-  timezone             String   @default("Europe/Istanbul")
-  defaultLanguage      String   @default("en")
-  dailyProductionLimit Int      @default(3)
-  dailyPublishingLimit Int      @default(3)
-  productionPaused     Boolean  @default(false)
-  publishingPaused     Boolean  @default(false)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  id                          String   @id @default("singleton")
+  projectName                 String   @default("Karzoun Media Factory")
+  timezone                    String   @default("Europe/Istanbul")
+  defaultLanguage             String   @default("en")
+  dailyProductionLimit        Int      @default(3)
+  dailyPublishingLimit        Int      @default(3)
+  productionPaused            Boolean  @default(false)
+  publishingPaused            Boolean  @default(false)
+  autopilotEnabled            Boolean  @default(false)
+  autopilotGeneralDailyTarget Int      @default(2)
+  autopilotKidsEnabled        Boolean  @default(false)
+  autopilotKidsDailyTarget    Int      @default(0)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
 }
 
 model IntegrationCredential {
@@ -111,6 +120,7 @@ model ProductionJob {
   promptId           String
   channelId          String
   status             JobStatus           @default(DRAFT)
+  origin             JobOrigin           @default(MANUAL)
   provider           String              @default("mock")
   providerJobId      String?
   requestedDuration  Int
@@ -135,6 +145,7 @@ model ProductionJob {
 
   @@index([status, updatedAt])
   @@index([channelId, status])
+  @@index([origin, createdAt])
 }
 
 model ReviewDecision {
