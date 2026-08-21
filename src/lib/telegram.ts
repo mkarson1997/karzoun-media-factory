@@ -1,6 +1,7 @@
 import { Markup, Telegraf, type Context } from 'telegraf';
 import { getAutopilotStatus, runAutopilotTick, setAutopilotEnabled } from './autopilot';
 import { getFactoryCounters, listJobs, requestRegeneration, transitionJob } from './control-plane';
+import { approveAndSmartSchedule, getSmartPublishSuggestion } from './smart-scheduler';
 import { prisma } from './prisma';
 
 function telegramConfig() {
@@ -71,7 +72,7 @@ export function createTelegramBot() {
 
   bot.start(async (ctx) => {
     await ctx.reply(
-      '🏭 Karzoun Media Factory is online.\n\n/status — factory counters\n/autopilot — automatic idea production\n/queue — latest jobs\n/review — videos waiting for review\n/analytics — latest performance\n/pause — stop generation + publishing\n/resume — resume factory\n/help — commands',
+      '🏭 Karzoun Media Factory is online.\n\n/status — factory counters\n/autopilot — automatic idea production\n/queue — latest jobs\n/review — videos waiting for review\n/schedule — next smart publish suggestion\n/analytics — latest performance\n/pause — stop generation + publishing\n/resume — resume factory\n/help — commands',
       Markup.inlineKeyboard([[Markup.button.url('Open Dashboard', `${baseUrl}/dashboard`)]])
     );
   });
@@ -143,15 +144,37 @@ export function createTelegramBot() {
       if (!jobs.length) return void await ctx.reply('Nothing is waiting for review.');
       for (const job of jobs) {
         await ctx.reply(
-          `🎬 ${job.prompt.externalPromptId} · ${job.requestedDuration}s\n${shortConcept(job.prompt.concept)}\nProvider: ${job.provider}`,
+          `🎬 ${job.prompt.externalPromptId} · ${job.requestedDuration}s\n${shortConcept(job.prompt.concept)}\nProvider: ${job.provider}\nOrigin: ${job.origin}`,
           Markup.inlineKeyboard([
-            [Markup.button.callback('✅ Approve', `approve:${job.id}`), Markup.button.callback('🔄 Regenerate', `regenerate:${job.id}`)],
+            [Markup.button.callback('✅ Approve + smart schedule', `approve-smart:${job.id}`)],
+            [Markup.button.callback('Approve only', `approve:${job.id}`), Markup.button.callback('🔄 Regenerate', `regenerate:${job.id}`)],
             [Markup.button.callback('❌ Reject', `reject:${job.id}`), Markup.button.url('Open Review', `${baseUrl}/review`)]
           ])
         );
       }
     } catch {
       await ctx.reply('Could not load review jobs.');
+    }
+  });
+
+  bot.command('schedule', async (ctx) => {
+    try {
+      const jobs = await listJobs({ status: 'APPROVED', take: 5 });
+      if (!jobs.length) {
+        await ctx.reply('No approved videos are waiting for scheduling.', Markup.inlineKeyboard([[Markup.button.url('Open Review', `${baseUrl}/review`)]]));
+        return;
+      }
+      const job = jobs[0];
+      const suggestion = await getSmartPublishSuggestion(job.id);
+      await ctx.reply(
+        `🗓 Smart publish suggestion\n\n${job.prompt.externalPromptId}\n${shortConcept(job.prompt.concept, 80)}\n\nTime: ${suggestion.localLabel}\nTimezone: ${suggestion.timezone}\nSource: ${suggestion.source}\n\n${suggestion.reason}`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Schedule this slot', `schedule-smart:${job.id}`)],
+          [Markup.button.url('Open Schedule', `${baseUrl}/schedule?job=${job.id}`)]
+        ])
+      );
+    } catch {
+      await ctx.reply('Could not calculate a smart publishing slot.');
     }
   });
 
@@ -184,7 +207,7 @@ export function createTelegramBot() {
   });
 
   bot.command('help', async (ctx) => {
-    await ctx.reply('/status — factory counters and pause state\n/autopilot — automatic idea selection and production\n/queue — latest jobs\n/review — approve, regenerate or reject\n/analytics — latest performance\n/pause — pause generation + publishing\n/resume — resume factory\n/help — commands');
+    await ctx.reply('/status — factory counters and pause state\n/autopilot — automatic idea selection and production\n/queue — latest jobs\n/review — one-tap approve + smart schedule, approve only, regenerate or reject\n/schedule — next recommended publish slot\n/analytics — latest performance\n/pause — pause generation + publishing\n/resume — resume factory\n/help — commands');
   });
 
   bot.action('autopilot:enable', async (ctx) => {
@@ -226,13 +249,37 @@ export function createTelegramBot() {
     }
   });
 
+  bot.action(/^approve-smart:(.+)$/, async (ctx) => {
+    try {
+      const id = ctx.match[1];
+      const suggestion = await approveAndSmartSchedule(id, { actor: `telegram:${allowedUserId}`, source: 'TELEGRAM' });
+      await ctx.answerCbQuery('Approved + scheduled');
+      await ctx.editMessageReplyMarkup(undefined);
+      await ctx.reply(`✅ Approved and smart-scheduled.\n\n${suggestion.localLabel}\n${suggestion.timezone}\nVisibility: ${suggestion.visibility}\nSource: ${suggestion.source}\n\n${suggestion.reason}`);
+    } catch (error) {
+      await ctx.answerCbQuery(error instanceof Error ? error.message.slice(0, 180) : 'Smart approval failed', { show_alert: true });
+    }
+  });
+
+  bot.action(/^schedule-smart:(.+)$/, async (ctx) => {
+    try {
+      const id = ctx.match[1];
+      const suggestion = await approveAndSmartSchedule(id, { actor: `telegram:${allowedUserId}`, source: 'TELEGRAM' });
+      await ctx.answerCbQuery('Scheduled');
+      await ctx.editMessageReplyMarkup(undefined);
+      await ctx.reply(`🗓 Scheduled for ${suggestion.localLabel} (${suggestion.timezone}) as ${suggestion.visibility}.`);
+    } catch (error) {
+      await ctx.answerCbQuery(error instanceof Error ? error.message.slice(0, 180) : 'Scheduling failed', { show_alert: true });
+    }
+  });
+
   bot.action(/^approve:(.+)$/, async (ctx) => {
     try {
       const id = ctx.match[1];
       await transitionJob(id, 'APPROVED', { actor: `telegram:${allowedUserId}`, source: 'TELEGRAM' });
       await ctx.answerCbQuery('Approved');
       await ctx.editMessageReplyMarkup(undefined);
-      await ctx.reply(`✅ Job ${id} approved.`);
+      await ctx.reply(`✅ Job ${id} approved. Use /schedule for the recommended slot.`);
     } catch (error) {
       await ctx.answerCbQuery(error instanceof Error ? error.message.slice(0, 180) : 'Approval failed', { show_alert: true });
     }
