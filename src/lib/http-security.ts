@@ -14,6 +14,7 @@ export function safeError(error: unknown) {
   if (error instanceof Error) {
     const safe = [
       'Prompt not found or inactive',
+      'Prompt already has a production job',
       'Production job not found',
       'No enabled',
       'Invalid production job transition',
