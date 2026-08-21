@@ -5,6 +5,7 @@ import { attachGeneratedMedia, claimJobTransition, transitionJob } from './lib/c
 import { getCreativeDirector, type CreativePlan } from './lib/creative-director';
 import { evaluateCreativeQuality } from './lib/creative-quality';
 import { getPublishingProvider, getVideoGenerationProvider } from './lib/providers';
+import { evaluateRuntimeSafety, readinessSummary } from './lib/runtime-readiness';
 import { createTelegramBot, notifyOperator } from './lib/telegram';
 import { notifyReviewReady } from './lib/telegram-review';
 import { syncPublishedAnalytics } from './lib/youtube-analytics';
@@ -113,16 +114,21 @@ async function pollOneMockGeneration() {
 }
 
 async function startOneGeneration() {
-  const queued = await prisma.productionJob.findFirst({
+  // Read a small ordered window instead of blindly taking the oldest job. A
+  // queued paid Autopilot job may be intentionally blocked by its independent
+  // spend lock; it must not starve a later MANUAL job that the operator wants
+  // to test.
+  const candidates = await prisma.productionJob.findMany({
     where: { status: 'QUEUED' },
     include: { prompt: true },
-    orderBy: { createdAt: 'asc' }
+    orderBy: { createdAt: 'asc' },
+    take: 25
   });
+  const queued = candidates.find((candidate) => !autopilotExecutionBlocked(candidate));
   if (!queued) return false;
 
-  // Re-check the automatic spending lock immediately before execution. This
-  // protects already-queued Autopilot jobs if the operator closes the lock
-  // after selection but before the worker reaches them.
+  // Re-check immediately before the atomic claim in case a deployment changes
+  // environment locks between selection and execution.
   if (autopilotExecutionBlocked(queued)) return false;
 
   const claimed = await claimJobTransition(queued.id, 'QUEUED', 'GENERATING', 'worker');
@@ -294,6 +300,12 @@ async function processCycle() {
 }
 
 async function main() {
+  const runtime = readinessSummary(evaluateRuntimeSafety(process.env));
+  if (!runtime.ready) {
+    throw new Error(`Worker startup blocked by runtime configuration: ${runtime.blocking.map((item) => item.name).join(', ')}`);
+  }
+  await prisma.$queryRaw`SELECT 1`;
+
   const bot = createTelegramBot();
   if (bot) {
     await bot.launch();
