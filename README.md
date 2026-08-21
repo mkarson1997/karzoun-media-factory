@@ -54,28 +54,48 @@ Configuration/readiness check:
 npm run doctor
 ```
 
-The doctor checks database reachability, operator security, Telegram pairing, Claude/OpenArt configuration, YouTube connection state, and the publishing safety locks. It does not trigger a paid video generation or a YouTube upload.
+The doctor checks database reachability, operator security, Telegram pairing, Claude/OpenArt configuration, every enabled YouTube channel binding, and publishing safety locks. It does not trigger paid video generation or a YouTube upload.
 
-## Prompt bank
+## 1,000-prompt bank
+
+The repository contains a deterministic generator for exactly **1,000 original Shorts briefs**:
+
+- **650 GENERAL** prompts across 13 entertainment categories
+- **350 KIDS_CHANNEL_ONLY** prompts across 7 child-safe categories
+- every requested duration is between **30 and 59 seconds**
+- every brief requests vertical 9:16 output, a fast hook, continuity, captions/sound design, and a loopable ending
+- every brief explicitly rejects copied creator footage, copyrighted characters, logos and watermarks
+- kids prompts additionally prohibit frightening injuries, dangerous imitation and realistic peril
+
+Generate the CSV with one command:
+
+```bash
+npm run prompts:generate
+```
+
+Output:
+
+```text
+data/Karzoun_Media_Lab_1000_Shorts_Prompts.csv
+```
+
+Generate and import it into PostgreSQL in one command:
+
+```bash
+npm run prompts:bootstrap
+```
 
 CSV columns:
 
 `id,channel,category,duration_seconds,concept,prompt`
 
-Import from CLI:
+You can also import any compatible CSV manually:
 
 ```bash
 npm run import:prompts -- ./data/Karzoun_Media_Lab_1000_Shorts_Prompts.csv
 ```
 
-The `/prompts` page also supports CSV upload from a phone.
-
-Allowed channel values:
-
-- `GENERAL`
-- `KIDS_CHANNEL_ONLY`
-
-The control plane will not automatically route `KIDS_CHANNEL_ONLY` prompts to a GENERAL channel.
+The `/prompts` page supports CSV upload from a phone. The control plane never automatically routes `KIDS_CHANNEL_ONLY` prompts into a GENERAL channel.
 
 ## Telegram control
 
@@ -96,9 +116,17 @@ Commands:
 - `/queue`
 - `/review`
 - `/analytics`
+- `/pause`
+- `/resume`
 - `/help`
 
-Review controls include **Approve**, **Regenerate**, and **Reject**. Telegram also receives ready-for-review, failure, approval, schedule-reminder, and publishing notifications.
+Review controls include **Approve**, **Regenerate**, and **Reject**. Telegram also receives ready-for-review, failure, approval, schedule-reminder, and publishing notifications. `/pause` is the emergency brake for both production and publishing; `/resume` re-enables them.
+
+## Channel isolation
+
+GENERAL and KIDS_CHANNEL_ONLY are separate factory channel records. Each channel can have its own encrypted YouTube OAuth refresh token and external YouTube channel binding.
+
+A kids job cannot fall back to the general channel's OAuth credential. The worker passes the factory channel ID into the YouTube provider and verifies the connected YouTube channel before upload.
 
 ## Claude creative director
 
@@ -157,7 +185,7 @@ APP_BASE_URL=https://factory.example.com
 APP_SECRET=<strong random secret>
 ```
 
-Then use the YouTube connect action in the dashboard/settings flow. The OAuth refresh token is encrypted with `APP_SECRET` before it is stored in PostgreSQL.
+Then open Settings and connect YouTube separately for each enabled factory channel. Refresh tokens are encrypted with `APP_SECRET` before storage in PostgreSQL.
 
 The requested scopes cover upload, read-only channel access, and YouTube Analytics.
 
@@ -222,13 +250,13 @@ The public targeted YouTube Analytics API does not expose the YouTube Studio **v
 
 ## Pages
 
-- `/dashboard` control-room counters, activity, connection state
+- `/dashboard` control-room counters, pause state, activity and connections
 - `/prompts` prompt library, filters, mobile CSV import, queue action
 - `/queue` production state machine and retries
 - `/review` mobile preview, creative plan, approve/regenerate/reject
 - `/schedule` private-default publishing schedule
 - `/analytics` performance cockpit and category winners
-- `/settings` limits, channels, provider state, safety interlocks
+- `/settings` limits, channel creation/connection, provider state and safety interlocks
 
 ## Local environment variables
 
@@ -255,13 +283,13 @@ npm run doctor
 ## Safe first real run
 
 1. Keep `VIDEO_PROVIDER=mock` and `PUBLISHING_PROVIDER=mock` until dashboard + Telegram are working.
-2. Import the prompt bank.
+2. Run `npm run prompts:bootstrap`.
 3. Queue and complete a full mock job.
 4. Configure Claude and OpenArt while `ALLOW_PAID_GENERATION=false`.
 5. Run `npm run doctor`.
 6. Unlock paid generation and create **one** real video.
 7. Review it manually from phone/Telegram.
-8. Connect YouTube OAuth.
+8. Connect the correct YouTube channel from Settings.
 9. Set `PUBLISHING_PROVIDER=youtube`, `ALLOW_YOUTUBE_UPLOAD=true`, and keep `ALLOW_PUBLIC_PUBLISHING=false`.
 10. Upload **one PRIVATE test video**.
 11. Verify analytics ingestion.
