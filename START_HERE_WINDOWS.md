@@ -31,6 +31,9 @@ This command:
 - creates `.env` if it does not exist
 - generates a strong PostgreSQL password
 - generates a strong `APP_SECRET`
+- uses host port `3100` by default so ordinary Next.js projects can keep port `3000`
+- stores the configurable host port as `KMF_PORT=3100`
+- migrates an older local `APP_BASE_URL=http://localhost:3000` to port 3100 without changing your secrets
 - forces first boot into MOCK mode
 - keeps every paid-generation and YouTube publishing lock closed
 - validates Docker Compose
@@ -38,7 +41,9 @@ This command:
 - runs lint, TypeScript checks, unit tests, and the production Next.js build inside the Docker build
 - starts PostgreSQL, the web app, and the worker
 - waits for the health endpoint
-- opens `http://localhost:3000/setup`
+- opens `http://localhost:3100/setup`
+
+If port 3100 is ever needed by another application, choose another unused host port in `.env` and keep `KMF_PORT` and `APP_BASE_URL` aligned.
 
 If the Docker build fails, the factory does not start. Fix the reported validation error before adding any real credentials.
 
@@ -59,7 +64,7 @@ Never send this value in chat or commit `.env` to Git.
 Open:
 
 ```text
-http://localhost:3000/setup
+http://localhost:3100/setup
 ```
 
 Press:
