@@ -8,7 +8,14 @@ async function digest(value: string) {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  if (pathname === '/login' || pathname === '/api/auth/login' || pathname === '/api/health' || pathname.startsWith('/_next/') || pathname.startsWith('/demo/')) {
+  if (
+    pathname === '/login' ||
+    pathname === '/api/auth/login' ||
+    pathname === '/api/health' ||
+    pathname === '/api/readiness' ||
+    pathname.startsWith('/_next/') ||
+    pathname.startsWith('/demo/')
+  ) {
     return NextResponse.next();
   }
 
