@@ -21,10 +21,11 @@ function safeBaseUrl(value: string | undefined) {
 }
 
 function selectedAiProvider(env: NodeJS.ProcessEnv) {
-  return env.AI_PROVIDER || (configured(env.OPENAI_API_KEY) ? 'openai' : 'anthropic');
+  return env.AI_PROVIDER || (configured(env.GROQ_API_KEY) ? 'groq' : configured(env.OPENAI_API_KEY) ? 'openai' : 'anthropic');
 }
 
 function aiProviderConfigured(env: NodeJS.ProcessEnv, provider: string) {
+  if (provider === 'groq') return configured(env.GROQ_API_KEY);
   if (provider === 'openai') return configured(env.OPENAI_API_KEY);
   if (provider === 'anthropic') return configured(env.ANTHROPIC_API_KEY) && configured(env.ANTHROPIC_MODEL);
   return false;
@@ -65,7 +66,7 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
     }
   ];
 
-  if (creativeDirector === 'openai' || creativeDirector === 'anthropic') {
+  if (creativeDirector === 'openai' || creativeDirector === 'groq' || creativeDirector === 'anthropic') {
     checks.push({
       name: 'AI creative director',
       ok: aiProviderConfigured(env, creativeDirector),
