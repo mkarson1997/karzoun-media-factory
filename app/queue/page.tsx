@@ -29,6 +29,8 @@ export default async function QueuePage() {
         <div className="section-title">Latest jobs</div>
         {jobs.length ? <div className="list">{jobs.map((job) => {
           const mockJob = job.provider === 'mock' || job.provider === 'mock-demo';
+          const queuedForMs = Date.now() - job.createdAt.getTime();
+          const looksStalled = !mockJob && job.status === 'QUEUED' && queuedForMs > 20_000;
           return (
           <article className="job-card" key={job.id}>
             <div className="prompt-head">
@@ -37,8 +39,9 @@ export default async function QueuePage() {
             </div>
             <p>{job.prompt.concept}</p>
             <div className="row"><span>Provider</span><span className="badge">{job.provider.toUpperCase()}</span></div>
-            {job.schedule ? <div className="row"><span>Publish slot<small className="block muted">{job.schedule.timezone} · {job.schedule.visibility}</small></span><span className="badge">{job.schedule.publishAt.toLocaleString()}</span></div> : null}
             {!mockJob && (job.status === 'QUEUED' || job.status === 'GENERATING') ? <p className="muted">Live-provider state is worker-owned. The dashboard cannot fake completion or skip the renderer.</p> : null}
+            {looksStalled ? <div className="notice"><strong>Worker attention needed.</strong> This live job has stayed QUEUED for more than 20 seconds. Production may be marked RUNNING in settings while the worker container itself is restarting or blocked by startup configuration. Run <code>docker compose ps</code> and <code>docker compose logs --tail=120 worker</code> to see the exact cause.</div> : null}
+            {job.schedule ? <div className="row"><span>Publish slot<small className="block muted">{job.schedule.timezone} · {job.schedule.visibility}</small></span><span className="badge">{job.schedule.publishAt.toLocaleString()}</span></div> : null}
             {job.failureReason ? <div className="notice"><strong>Failure:</strong> {job.failureReason}</div> : null}
             <div className="actions">
               {mockJob && job.status === 'QUEUED' ? <ApiActionButton endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'GENERATING' }} label="Start mock generation" /> : null}
