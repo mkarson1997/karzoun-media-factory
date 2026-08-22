@@ -83,7 +83,6 @@ export class AnthropicCreativeDirector implements CreativeDirector {
     const message = await client.messages.create({
       model,
       max_tokens: 3000,
-      temperature: 0.45,
       system: 'You are the creative director for Karzoun Media Factory. Return only valid JSON. Design genuinely original, advertiser-friendly vertical Shorts with a clear viewer payoff. Never imitate an existing channel, copyrighted character, celebrity, logo, franchise style, or creator footage. Do not generate filler or near-duplicate shots. Factual claims must be conservative and verifiable. Kids-only content must remain age-appropriate, non-commercial, non-frightening, and must not encourage dangerous imitation or manipulative engagement.',
       messages: [{
         role: 'user',
