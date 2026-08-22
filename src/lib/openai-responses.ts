@@ -44,6 +44,17 @@ function providerConfig() {
   } as const;
 }
 
+function normalizePayload(payload: OpenAIResponsePayload, provider: ResponsesProvider) {
+  if (provider !== 'groq') return payload;
+  const normalized = { ...payload };
+  if (normalized.text && typeof normalized.text === 'object' && !Array.isArray(normalized.text)) {
+    const text = { ...(normalized.text as Record<string, unknown>) };
+    delete text.verbosity;
+    normalized.text = text;
+  }
+  return normalized;
+}
+
 export async function createOpenAIResponse(payload: OpenAIResponsePayload) {
   const config = providerConfig();
   const response = await fetch(config.endpoint, {
@@ -52,7 +63,7 @@ export async function createOpenAIResponse(payload: OpenAIResponsePayload) {
       Authorization: `Bearer ${config.apiKey}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(normalizePayload(payload, config.provider)),
     signal: AbortSignal.timeout(15 * 60 * 1000)
   });
 
