@@ -4,6 +4,7 @@ import { runAutopilotTick } from './lib/autopilot';
 import { attachGeneratedMedia, claimJobTransition, transitionJob } from './lib/control-plane';
 import { getCreativeDirector, type CreativePlan } from './lib/creative-director';
 import { evaluateCreativeQuality } from './lib/creative-quality';
+import { getOpenArtAccessToken } from './lib/openart-oauth';
 import { getPublishingProvider, getVideoGenerationProvider } from './lib/providers';
 import { evaluateRuntimeSafety, readinessSummary } from './lib/runtime-readiness';
 import { createTelegramBot, notifyOperator } from './lib/telegram';
@@ -114,10 +115,6 @@ async function pollOneMockGeneration() {
 }
 
 async function startOneGeneration() {
-  // Read a small ordered window instead of blindly taking the oldest job. A
-  // queued paid Autopilot job may be intentionally blocked by its independent
-  // spend lock; it must not starve a later MANUAL job that the operator wants
-  // to test.
   const candidates = await prisma.productionJob.findMany({
     where: { status: 'QUEUED' },
     include: { prompt: true },
@@ -127,8 +124,6 @@ async function startOneGeneration() {
   const queued = candidates.find((candidate) => !autopilotExecutionBlocked(candidate));
   if (!queued) return false;
 
-  // Re-check immediately before the atomic claim in case a deployment changes
-  // environment locks between selection and execution.
   if (autopilotExecutionBlocked(queued)) return false;
 
   const claimed = await claimJobTransition(queued.id, 'QUEUED', 'GENERATING', 'worker');
@@ -305,6 +300,17 @@ async function main() {
     throw new Error(`Worker startup blocked by runtime configuration: ${runtime.blocking.map((item) => item.name).join(', ')}`);
   }
   await prisma.$queryRaw`SELECT 1`;
+
+  if ((process.env.VIDEO_PROVIDER || 'mock') === 'openart-mcp') {
+    const openArtToken = await getOpenArtAccessToken().catch((error) => {
+      console.error('OpenArt OAuth startup validation failed:', error instanceof Error ? error.message : 'unknown error');
+      return null;
+    });
+    if (!openArtToken) {
+      throw new Error('Worker startup blocked: OpenArt OAuth is unavailable. Import the durable Inspector OAuth credential or provide a valid .env fallback token.');
+    }
+    console.log('OpenArt OAuth ready. Durable credential or .env fallback resolved successfully.');
+  }
 
   const bot = createTelegramBot();
   if (bot) {
