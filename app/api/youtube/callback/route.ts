@@ -9,6 +9,12 @@ function equalState(left: string, right: string) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+function factoryUrl(path: string) {
+  const baseUrl = process.env.APP_BASE_URL;
+  if (!baseUrl) throw new Error('APP_BASE_URL is required for OAuth redirects');
+  return new URL(path, baseUrl);
+}
+
 function redirectAndClear(next: URL) {
   const response = NextResponse.redirect(next);
   response.cookies.delete('youtube_oauth_state');
@@ -41,7 +47,7 @@ async function bindChannel(factoryChannelId: string, youtubeChannelId: string, y
 }
 
 export async function GET(request: NextRequest) {
-  const settings = new URL('/settings', request.url);
+  const settings = factoryUrl('/settings');
   const code = request.nextUrl.searchParams.get('code');
   const state = request.nextUrl.searchParams.get('state');
   const error = request.nextUrl.searchParams.get('error');
@@ -79,7 +85,7 @@ export async function GET(request: NextRequest) {
       return redirectAndClear(settings);
     }
 
-    const select = new URL('/youtube/select', request.url);
+    const select = factoryUrl('/youtube/select');
     select.searchParams.set('channelId', factoryChannel.id);
     return redirectAndClear(select);
   } catch {
