@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { MockCreativeDirector, validateTimeline } from './creative-director';
+import { afterEach, describe, expect, it } from 'vitest';
+import { getCreativeDirector, MockCreativeDirector, OpenAICreativeDirector, validateTimeline } from './creative-director';
 
 describe('creative director', () => {
+  afterEach(() => { delete process.env.CREATIVE_DIRECTOR; });
+
   it('creates a deterministic credit-free plan in mock mode', async () => {
     const director = new MockCreativeDirector();
     const result = await director.prepare({
@@ -17,6 +19,11 @@ describe('creative director', () => {
     expect(result.plan.shots[0].startSecond).toBe(0);
     expect(result.plan.shots.at(-1)?.endSecond).toBe(42);
     expect(() => validateTimeline(result.plan, 42)).not.toThrow();
+  });
+
+  it('selects OpenAI without making a network call', () => {
+    process.env.CREATIVE_DIRECTOR = 'openai';
+    expect(getCreativeDirector()).toBeInstanceOf(OpenAICreativeDirector);
   });
 
   it('marks kids plans for isolated routing', async () => {
