@@ -56,9 +56,9 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
   if (videoProvider === 'openart-mcp') {
     checks.push({
       name: 'OpenArt MCP configuration',
-      ok: configured(env.ANTHROPIC_API_KEY) && configured(env.ANTHROPIC_MODEL) && configured(env.OPENART_MCP_ACCESS_TOKEN),
+      ok: configured(env.ANTHROPIC_API_KEY) && configured(env.ANTHROPIC_MODEL),
       severity: 'required',
-      detail: 'ANTHROPIC_API_KEY, ANTHROPIC_MODEL and OPENART_MCP_ACCESS_TOKEN are required for openart-mcp'
+      detail: 'Anthropic credentials are configured. OpenArt OAuth is resolved at worker startup from the encrypted durable credential store, with .env as a fallback.'
     });
     checks.push({
       name: 'Paid generation lock',
