@@ -1,5 +1,6 @@
 import { listJobs } from '@/src/lib/control-plane';
 import { ApiActionButton } from '@/app/components/ApiActionButton';
+import { AutoRefresh } from '@/app/components/AutoRefresh';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,9 +12,15 @@ export default async function ReviewPage() {
   return (
     <div className="page">
       <section className="hero">
-        <div className="eyebrow">QUALITY GATE</div>
-        <h1>Review</h1>
-        <p>Inspect the generated result, then approve and smart-schedule it in one tap, approve without scheduling, regenerate, or reject it. Publishing safety locks still apply.</p>
+        <div className="prompt-head">
+          <div>
+            <div className="eyebrow">QUALITY GATE</div>
+            <h1>Review</h1>
+          </div>
+          <AutoRefresh seconds={5} />
+        </div>
+        <p>Inspect the generated result, then approve and smart-schedule it in one tap, approve without scheduling, regenerate, or reject it. This page refreshes automatically while the renderer finishes.</p>
+        <div className="hero-actions"><a className="button secondary" href="/queue">Production queue</a><a className="button secondary" href="/prompts">Prompt Library</a></div>
       </section>
 
       {!databaseReady ? <div className="notice">Database is not configured.</div> : null}
@@ -38,7 +45,7 @@ export default async function ReviewPage() {
               <ApiActionButton className="button danger" endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'REJECTED' }} label="Reject" />
             </div>
           </article>
-        )) : <div className="card"><p className="muted">Nothing is waiting for review.</p><a className="button" href="/queue">Open queue</a></div>}
+        )) : <div className="card"><p className="muted">Nothing is waiting for review yet. If a live render is running, keep this page open and it will appear automatically.</p><a className="button" href="/queue">Open queue</a></div>}
       </section>
     </div>
   );
