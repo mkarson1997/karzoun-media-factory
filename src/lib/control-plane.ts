@@ -57,7 +57,7 @@ export async function listJobs(input?: { status?: PrismaJobStatus; take?: number
 
 export async function queuePrompt(promptId: string, actor = 'dashboard') {
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(${PRODUCTION_QUEUE_LOCK_ID})`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${PRODUCTION_QUEUE_LOCK_ID})`;
 
     const prompt = await tx.prompt.findUnique({ where: { id: promptId } });
     if (!prompt || !prompt.active) throw new Error('Prompt not found or inactive');
@@ -212,7 +212,7 @@ export async function attachGeneratedMedia(jobId: string, input: { providerJobId
 
 export async function scheduleApprovedJob(jobId: string, input: { publishAt: Date; timezone: string; visibility?: 'PRIVATE' | 'UNLISTED' | 'PUBLIC'; title?: string; description?: string; hashtags?: string[] }, actor = 'dashboard') {
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(${PUBLISH_SCHEDULE_LOCK_ID})`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${PUBLISH_SCHEDULE_LOCK_ID})`;
 
     const job = await tx.productionJob.findUnique({ where: { id: jobId } });
     if (!job) throw new Error('Production job not found');
