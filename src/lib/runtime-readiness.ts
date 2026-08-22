@@ -20,10 +20,22 @@ function safeBaseUrl(value: string | undefined) {
   }
 }
 
+function selectedAiProvider(env: NodeJS.ProcessEnv) {
+  return env.AI_PROVIDER || (configured(env.OPENAI_API_KEY) ? 'openai' : 'anthropic');
+}
+
+function aiProviderConfigured(env: NodeJS.ProcessEnv, provider: string) {
+  if (provider === 'openai') return configured(env.OPENAI_API_KEY);
+  if (provider === 'anthropic') return configured(env.ANTHROPIC_API_KEY) && configured(env.ANTHROPIC_MODEL);
+  return false;
+}
+
 export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): ReadinessCheck[] {
   const production = env.NODE_ENV === 'production';
   const videoProvider = env.VIDEO_PROVIDER || 'mock';
   const publishingProvider = env.PUBLISHING_PROVIDER || 'mock';
+  const creativeDirector = env.CREATIVE_DIRECTOR || 'mock';
+  const aiProvider = selectedAiProvider(env);
   const paid = env.ALLOW_PAID_GENERATION === 'true';
   const autopilotPaid = env.ALLOW_AUTOPILOT_PAID_GENERATION === 'true';
   const uploads = env.ALLOW_YOUTUBE_UPLOAD === 'true';
@@ -53,12 +65,21 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
     }
   ];
 
+  if (creativeDirector === 'openai' || creativeDirector === 'anthropic') {
+    checks.push({
+      name: 'AI creative director',
+      ok: aiProviderConfigured(env, creativeDirector),
+      severity: 'required',
+      detail: aiProviderConfigured(env, creativeDirector) ? `${creativeDirector} creative director configured` : `${creativeDirector} creative director credentials missing`
+    });
+  }
+
   if (videoProvider === 'openart-mcp') {
     checks.push({
       name: 'OpenArt MCP configuration',
-      ok: configured(env.ANTHROPIC_API_KEY) && configured(env.ANTHROPIC_MODEL),
+      ok: aiProviderConfigured(env, aiProvider),
       severity: 'required',
-      detail: 'Anthropic credentials are configured. OpenArt OAuth is resolved at worker startup from the encrypted durable credential store, with .env as a fallback.'
+      detail: `${aiProvider} MCP bridge selected. OpenArt OAuth is resolved at worker startup from the encrypted durable credential store, with .env as a fallback.`
     });
     checks.push({
       name: 'Paid generation lock',
