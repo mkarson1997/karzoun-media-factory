@@ -47,11 +47,27 @@ function creativePrompt(input: CreativeDirectorInput) {
   return `Prepare a production plan for this ${input.durationSeconds}-second 9:16 Short.\nID: ${input.externalPromptId}\nChannel type: ${input.channelType}\nCategory: ${input.category}\nConcept: ${input.concept}\nSource prompt:\n${input.fullPrompt}\n\nReturn exactly this JSON shape: {"hook":"","script":"","title":"max 55 chars","description":"","hashtags":["#..."],"visualStyle":"","audioDirection":"","shots":[{"startSecond":0,"endSecond":5,"visualPrompt":"","camera":"","narration":""}],"safetyNotes":[""]}. Shots must cover the full duration in chronological order with no gaps or overlaps. Use at least ${minShots} materially different visual beats. The first shot must communicate the hook immediately, the middle must escalate rather than repeat, and the final shot must deliver a real payoff and preferably a natural loop. Keep title/description truthful and avoid fake urgency or guaranteed-view language.`;
 }
 
+export function normalizeCreativeTitle(value: unknown) {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (trimmed.length <= 55) return trimmed;
+
+  const hardLimit = trimmed.slice(0, 55).trimEnd();
+  const wordBoundary = hardLimit.lastIndexOf(' ');
+  return wordBoundary >= 36 ? hardLimit.slice(0, wordBoundary).trimEnd() : hardLimit;
+}
+
+function normalizeCreativePayload(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return { ...record, title: normalizeCreativeTitle(record.title) };
+}
+
 function parseCreativePlan(text: string, durationSeconds: number) {
   if (!text) throw new Error('AI creative director returned no creative plan');
   let parsed: unknown;
   try { parsed = JSON.parse(text); } catch { throw new Error('AI creative director returned invalid JSON'); }
-  const plan = creativePlanSchema.parse(parsed);
+  const plan = creativePlanSchema.parse(normalizeCreativePayload(parsed));
   validateTimeline(plan, durationSeconds);
   return plan;
 }
