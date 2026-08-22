@@ -302,20 +302,19 @@ async function main() {
   await prisma.$queryRaw`SELECT 1`;
 
   if ((process.env.VIDEO_PROVIDER || 'mock') === 'openart-mcp') {
-    const openArtToken = await getOpenArtAccessToken().catch((error) => {
-      console.error('OpenArt OAuth startup validation failed:', error instanceof Error ? error.message : 'unknown error');
-      return null;
-    });
-    if (!openArtToken) {
-      throw new Error('Worker startup blocked: OpenArt OAuth is unavailable. Import the durable Inspector OAuth credential or provide a valid .env fallback token.');
-    }
+    const token = await getOpenArtAccessToken();
+    if (!token) throw new Error('Worker startup blocked: OpenArt OAuth could not resolve an access token from the durable credential store or .env fallback');
     console.log('OpenArt OAuth ready. Durable credential or .env fallback resolved successfully.');
   }
 
   const bot = createTelegramBot();
   if (bot) {
-    await bot.launch();
-    console.log('Telegram control bot started.');
+    // Telegraf launch() stays pending for the lifetime of long polling. Awaiting
+    // it here would freeze the worker before the production loop ever starts.
+    void bot.launch()
+      .then(() => console.log('Telegram control bot polling stopped.'))
+      .catch((error) => console.error('Telegram control bot polling failed:', error instanceof Error ? error.message : 'unknown error'));
+    console.log('Telegram control bot started in background.');
   } else {
     console.log('Telegram disabled until TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USER_ID are configured.');
   }
