@@ -43,8 +43,8 @@ export default async function SetupPage() {
         <div className="section-title">Launch path</div>
         <div className="activation-phases">
           {phase(report.phases.mockReady, '1. Safe mock factory', 'Database, operator security, GENERAL channel and prompt bank.')}
-          {phase(report.phases.creativeConfigured, '2. Claude configured', 'Creative director credentials are present. No paid render is required yet.')}
-          {phase(report.phases.realRenderConfigured, '3. Real renderer configured', 'OpenArt MCP is selected and configured. Spending can remain locked.')}
+          {phase(report.phases.creativeConfigured, '2. AI creative director configured', 'OpenAI or Claude creative-director credentials are present. No paid render is required yet.')}
+          {phase(report.phases.realRenderConfigured, '3. Real renderer configured', 'OpenArt MCP is selected and connected through the selected AI bridge. Spending can remain locked.')}
           {phase(report.phases.privateYouTubeConfigured, '4. Private YouTube path configured', 'GENERAL channel OAuth is connected and YouTube is selected as publishing provider.')}
           {phase(report.phases.paidAutopilotReady, '5. Paid Autopilot explicitly unlocked', 'Both manual paid rendering and background Autopilot spending locks are open.')}
           {phase(report.phases.publicPublishingReady, '6. Public publishing unlocked', 'Final stage only after a PRIVATE end-to-end upload has been verified.')}
