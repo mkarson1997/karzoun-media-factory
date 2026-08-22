@@ -7,6 +7,7 @@ import { openSafeRemoteMedia } from './remote-media';
 const DEFAULT_OPENART_MCP_URL = 'https://mcp.openart.ai/mcp';
 const DEFAULT_GROQ_MCP_MODEL = 'qwen/qwen3.6-27b';
 const MEDIA_URL_RE = /https:\/\/[^\s"'<>]+/g;
+const SAFE_DISCOVERY_TOOLS = new Set(['openart_model_list', 'openart_model_form_get']);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -59,6 +60,30 @@ function getResponseMessages(payload: unknown) {
   const output = (payload as JsonRecord).output;
   if (!Array.isArray(output)) return [] as JsonRecord[];
   return output.filter((item): item is JsonRecord => Boolean(item && typeof item === 'object' && (item as JsonRecord).type === 'message'));
+}
+
+function getResponseStatus(payload: unknown) {
+  if (!payload || typeof payload !== 'object') return 'unknown';
+  const status = (payload as JsonRecord).status;
+  return typeof status === 'string' ? status : 'unknown';
+}
+
+function getIncompleteDetail(payload: unknown) {
+  if (!payload || typeof payload !== 'object') return null;
+  const details = (payload as JsonRecord).incomplete_details;
+  if (!details || typeof details !== 'object') return null;
+  const record = details as JsonRecord;
+  const reason = record.reason;
+  return typeof reason === 'string' ? reason : JSON.stringify(details).slice(0, 180);
+}
+
+function mcpCallNames(calls: JsonRecord[]) {
+  return [...new Set(calls.map((call) => typeof call.name === 'string' ? call.name : null).filter((name): name is string => Boolean(name)))];
+}
+
+function discoveryOnly(calls: JsonRecord[]) {
+  const names = mcpCallNames(calls);
+  return names.length > 0 && names.every((name) => SAFE_DISCOVERY_TOOLS.has(name));
 }
 
 function collectUrlsFromMcpCalls(calls: JsonRecord[]) {
@@ -128,13 +153,19 @@ async function findPlayableVideoUrl(urls: string[], mcpServerUrl: string) {
 
 function renderPrompt(input: VideoGenerationRequest, modelHint: string, retry = false) {
   const retryInstruction = retry
-    ? '\nMANDATORY RETRY: The previous model response did not execute an MCP tool. Do not return any explanatory text first. Discover the OpenArt MCP tools and immediately call the appropriate video-generation tool. A response without an MCP call is a failure.'
+    ? '\nRETRY: The previous attempt stopped during OpenArt model discovery/form lookup before generation. Reuse the same brief, minimize commentary, finish the tool workflow, actually start the video generation, wait/poll as supported, and return the completed video asset URL.'
     : '';
 
-  return `Render production job ${input.jobId}.\nTarget duration: ${input.durationSeconds} seconds.\nAspect ratio: 9:16 vertical.\nModel preference: ${modelHint}\n\nCreative production plan:\n${input.prompt}\n\nYou MUST use the OpenArt MCP server to generate the finished video. Do not answer with instructions, documentation links, the MCP server URL, or a hypothetical result. If a single generation cannot cover the full requested duration, use the provider's supported continuation/extension workflow while preserving continuity. Continue using OpenArt tools until a completed video asset is returned. When OpenArt returns the finished asset, include its direct downloadable/video URL in your final response so the factory can validate it.${retryInstruction}`;
+  return `Create one finished OpenArt video for job ${input.jobId}.\nDuration: ${input.durationSeconds}s. Aspect: 9:16.\nModel: ${modelHint}\nBrief: ${input.prompt}\nUse OpenArt MCP. Model discovery/form lookup is only setup, not success. Continue until you call the actual generation tool and obtain the completed video. Return the direct video/download URL. If the provider requires polling/status checks, perform them until completion.${retryInstruction}`;
 }
 
-const RENDER_SYSTEM = 'You are the rendering operator for Karzoun Media Factory. You must execute at least one connected OpenArt MCP tool for every render request. Create exactly one original vertical video from the supplied production brief. Do not imitate copyrighted characters, channels, celebrities, logos, or creator footage. Use only original or properly generated media. Wait for OpenArt generation to complete when the tools support it. Never claim success from tool discovery, documentation, a server URL, or a textual answer. Success requires a completed playable video asset returned by an OpenArt MCP tool. After completion, expose the finished asset direct URL in the final response so the factory can validate and review it.';
+const RENDER_SYSTEM = 'You operate OpenArt MCP for Karzoun Media Factory. Produce exactly one original vertical video. Model discovery or form lookup is not generation. Continue the MCP workflow through the actual video-generation call and completion/status checks. Never claim success without a completed playable video asset URL. Avoid copyrighted characters, celebrities, logos, franchises, or copied creator footage.';
+
+function groqOutputBudget(attempt: number) {
+  const configured = Number(process.env.GROQ_MCP_MAX_OUTPUT_TOKENS);
+  if (Number.isFinite(configured) && configured >= 1800 && configured <= 6000) return Math.floor(configured);
+  return attempt > 1 ? 3600 : 3000;
+}
 
 async function generateViaOpenAICompatible(input: VideoGenerationRequest, token: string, url: string, modelHint: string) {
   const groq = selectedAiProvider() === 'groq';
@@ -145,7 +176,7 @@ async function generateViaOpenAICompatible(input: VideoGenerationRequest, token:
     ? {
         type: 'mcp',
         server_label: 'openart',
-        server_description: 'OpenArt production tools for creating actual images and videos. For this request, discover and execute the video-generation tool, wait for completion, and return the completed video asset direct URL. Do not answer without calling OpenArt.',
+        server_description: 'OpenArt production tools. For this request, discover the needed video model/form only as setup, then execute the actual video-generation tool, wait or poll until completion, and return the finished video asset URL.',
         server_url: url,
         headers: { Authorization: `Bearer ${token}` },
         require_approval: 'never'
@@ -165,34 +196,53 @@ async function generateViaOpenAICompatible(input: VideoGenerationRequest, token:
     const payload: Record<string, unknown> = {
       model,
       reasoning: { effort: process.env.OPENAI_REASONING_EFFORT || 'low' },
-      max_output_tokens: groq ? 1000 : 2200,
+      max_output_tokens: groq ? groqOutputBudget(attempt) : 2200,
       instructions: RENDER_SYSTEM,
       input: renderPrompt(input, modelHint, attempt > 1),
       tools: [mcpTool]
     };
 
-    // Groq documents remote MCP with automatic tool selection. Forcing
-    // tool_choice="required" can return HTTP 400 when the model declines to
-    // call a dynamically discovered MCP tool. We instead verify that an MCP
-    // call actually happened and retry once with stronger steering.
-    if (!groq) {
+    if (groq) {
+      // OpenArt video creation is a multi-step MCP flow: model catalog -> form
+      // schema -> generation -> optional status/poll. A 1k token budget was
+      // truncating the response after discovery. Give the server-side agent
+      // enough room to finish, but cap tool calls to avoid runaway loops.
+      payload.max_tool_calls = 20;
+    } else {
       payload.tool_choice = 'required';
       payload.text = { verbosity: 'low' };
     }
 
     const response = await createOpenAIResponse(payload);
     lastResponse = response;
-    if (!groq || getMcpCalls(response).length > 0) {
-      const prefix = groq ? 'groq' : 'openai';
+    if (!groq) {
+      const prefix = 'openai';
       return { id: typeof response.id === 'string' ? response.id : `${prefix}-${input.jobId}`, payload: response };
     }
 
-    console.warn(`Groq MCP bridge returned no OpenArt tool call (${attempt}/${attempts}). Retrying with stronger tool-use instructions.`);
+    const calls = getMcpCalls(response);
+    const status = getResponseStatus(response);
+
+    if (status === 'completed' && calls.length > 0) {
+      return { id: typeof response.id === 'string' ? response.id : `groq-${input.jobId}`, payload: response };
+    }
+
+    // Automatic retry is safe only when OpenArt performed read-only discovery
+    // calls. If any other tool ran, it may have started a paid generation, so
+    // return the response and let the caller inspect Media/credits instead of
+    // risking a duplicate render.
+    if (attempt < attempts && (calls.length === 0 || (status === 'incomplete' && discoveryOnly(calls)))) {
+      const detail = getIncompleteDetail(response);
+      const names = mcpCallNames(calls);
+      console.warn(`Groq OpenArt MCP attempt ${attempt}/${attempts} stopped before generation (${status}${detail ? `: ${detail}` : ''}; tools: ${names.join(', ') || 'none'}). Retrying with a larger completion budget.`);
+      continue;
+    }
+
+    return { id: typeof response.id === 'string' ? response.id : `groq-${input.jobId}`, payload: response };
   }
 
-  const prefix = groq ? 'groq' : 'openai';
   return {
-    id: typeof lastResponse?.id === 'string' ? lastResponse.id : `${prefix}-${input.jobId}`,
+    id: typeof lastResponse?.id === 'string' ? lastResponse.id : `groq-${input.jobId}`,
     payload: lastResponse ?? {}
   };
 }
@@ -236,12 +286,15 @@ export class OpenArtMcpVideoProvider implements VideoGenerationProvider {
       ])];
 
       if (!urls.length) {
-        const names = [...new Set(mcpCalls.map((call) => typeof call.name === 'string' ? call.name : null).filter((name): name is string => Boolean(name)))];
-        const status = result.payload && typeof result.payload === 'object' && typeof (result.payload as JsonRecord).status === 'string'
-          ? String((result.payload as JsonRecord).status)
-          : 'unknown';
-        const calls = names.length ? ` Tools: ${names.slice(0, 8).join(', ')}.` : '';
-        throw new Error(`OpenArt MCP via ${aiProvider} executed ${mcpCalls.length} MCP call(s) but returned no media URL in either tool results or the final assistant message. Response status: ${status}.${calls} The render is not complete.`);
+        const names = mcpCallNames(mcpCalls);
+        const status = getResponseStatus(result.payload);
+        const detail = getIncompleteDetail(result.payload);
+        const calls = names.length ? ` Tools: ${names.slice(0, 10).join(', ')}.` : '';
+        const incomplete = detail ? ` Incomplete reason: ${detail}.` : '';
+        const discoveryMessage = status === 'incomplete' && discoveryOnly(mcpCalls)
+          ? ' OpenArt only reached model discovery/form lookup; no generation tool ran, so no OpenArt credits should have been spent.'
+          : '';
+        throw new Error(`OpenArt MCP via ${aiProvider} executed ${mcpCalls.length} MCP call(s) but returned no media URL. Response status: ${status}.${incomplete}${calls}${discoveryMessage} The render is not complete.`);
       }
     }
 
