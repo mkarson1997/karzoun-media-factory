@@ -41,6 +41,14 @@ export async function listPrompts(input?: { search?: string; channelType?: 'GENE
         { concept: { contains: search, mode: 'insensitive' } }
       ] : undefined
     },
+    include: {
+      jobs: {
+        where: { status: { not: PrismaJobStatus.CANCELLED } },
+        select: { id: true, status: true, provider: true, updatedAt: true },
+        orderBy: { updatedAt: 'desc' },
+        take: 1
+      }
+    },
     orderBy: { updatedAt: 'desc' },
     take: Math.min(input?.take ?? 50, 100)
   });
@@ -105,7 +113,6 @@ export async function transitionJob(jobId: string, to: JobStatus, options?: { ac
     if (!job) throw new Error('Production job not found');
 
     assertTransition(job.status as JobStatus, to);
-
     const updated = await tx.productionJob.update({
       where: { id: job.id },
       data: {
@@ -127,13 +134,7 @@ export async function transitionJob(jobId: string, to: JobStatus, options?: { ac
     }
 
     await tx.activityLog.create({
-      data: {
-        actor,
-        action: 'JOB_STATUS_CHANGED',
-        entityType: 'ProductionJob',
-        entityId: job.id,
-        metadata: { from: job.status, to }
-      }
+      data: { actor, action: 'JOB_STATUS_CHANGED', entityType: 'ProductionJob', entityId: job.id, metadata: { from: job.status, to } }
     });
     return { updated, externalPromptId: job.prompt.externalPromptId };
   });
@@ -147,20 +148,10 @@ export async function transitionJob(jobId: string, to: JobStatus, options?: { ac
 export async function claimJobTransition(jobId: string, from: JobStatus, to: JobStatus, actor = 'worker') {
   assertTransition(from, to);
   return prisma.$transaction(async (tx) => {
-    const claimed = await tx.productionJob.updateMany({
-      where: { id: jobId, status: from as PrismaJobStatus },
-      data: { status: to as PrismaJobStatus }
-    });
+    const claimed = await tx.productionJob.updateMany({ where: { id: jobId, status: from as PrismaJobStatus }, data: { status: to as PrismaJobStatus } });
     if (claimed.count !== 1) return false;
-
     await tx.activityLog.create({
-      data: {
-        actor,
-        action: 'JOB_STATUS_CLAIMED',
-        entityType: 'ProductionJob',
-        entityId: jobId,
-        metadata: { from, to }
-      }
+      data: { actor, action: 'JOB_STATUS_CLAIMED', entityType: 'ProductionJob', entityId: jobId, metadata: { from, to } }
     });
     return true;
   });
@@ -171,9 +162,7 @@ export async function requestRegeneration(jobId: string, options?: { actor?: str
   return prisma.$transaction(async (tx) => {
     const job = await tx.productionJob.findUnique({ where: { id: jobId } });
     if (!job) throw new Error('Production job not found');
-    if (job.status !== PrismaJobStatus.READY_FOR_REVIEW && job.status !== PrismaJobStatus.REJECTED) {
-      throw new Error('Regeneration is only available for a review or rejected job');
-    }
+    if (job.status !== PrismaJobStatus.READY_FOR_REVIEW && job.status !== PrismaJobStatus.REJECTED) throw new Error('Regeneration is only available for a review or rejected job');
 
     if (job.status === PrismaJobStatus.READY_FOR_REVIEW) {
       assertTransition('READY_FOR_REVIEW', 'REJECTED');
@@ -190,18 +179,9 @@ export async function requestRegeneration(jobId: string, options?: { actor?: str
 
     const updated = await tx.productionJob.update({
       where: { id: job.id },
-      data: {
-        status: PrismaJobStatus.QUEUED,
-        providerJobId: null,
-        videoUrl: null,
-        thumbnailUrl: null,
-        failureReason: null,
-        retryCount: { increment: 1 }
-      }
+      data: { status: PrismaJobStatus.QUEUED, providerJobId: null, videoUrl: null, thumbnailUrl: null, failureReason: null, retryCount: { increment: 1 } }
     });
-    await tx.activityLog.create({
-      data: { actor, action: 'JOB_REGENERATION_REQUESTED', entityType: 'ProductionJob', entityId: job.id }
-    });
+    await tx.activityLog.create({ data: { actor, action: 'JOB_REGENERATION_REQUESTED', entityType: 'ProductionJob', entityId: job.id } });
     return updated;
   });
 }
@@ -221,19 +201,12 @@ export async function scheduleApprovedJob(jobId: string, input: { publishAt: Dat
     const settings = await tx.appSettings.findUnique({ where: { id: 'singleton' } });
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const recentSchedules = await tx.publishSchedule.count({ where: { createdAt: { gte: since } } });
-    if (settings && recentSchedules >= settings.dailyPublishingLimit) {
-      throw new Error(`Daily publishing limit reached (${settings.dailyPublishingLimit})`);
-    }
+    if (settings && recentSchedules >= settings.dailyPublishingLimit) throw new Error(`Daily publishing limit reached (${settings.dailyPublishingLimit})`);
 
     const visibility = Visibility[input.visibility ?? 'PRIVATE'];
     const updated = await tx.productionJob.update({
       where: { id: job.id },
-      data: {
-        status: PrismaJobStatus.SCHEDULED,
-        title: input.title ?? job.title,
-        description: input.description ?? job.description,
-        hashtags: input.hashtags ?? job.hashtags
-      }
+      data: { status: PrismaJobStatus.SCHEDULED, title: input.title ?? job.title, description: input.description ?? job.description, hashtags: input.hashtags ?? job.hashtags }
     });
 
     await tx.publishSchedule.upsert({
