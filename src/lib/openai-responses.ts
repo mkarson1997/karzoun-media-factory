@@ -46,12 +46,20 @@ function providerConfig() {
 
 function normalizePayload(payload: OpenAIResponsePayload, provider: ResponsesProvider) {
   if (provider !== 'groq') return payload;
+
   const normalized = { ...payload };
+
+  // Groq's Responses-compatible endpoint is not feature-identical to OpenAI's.
+  // In particular, models such as qwen/qwen3.6-27b reject reasoning.effort.
+  // Strip OpenAI-only response controls before sending the request to Groq.
+  delete normalized.reasoning;
+
   if (normalized.text && typeof normalized.text === 'object' && !Array.isArray(normalized.text)) {
     const text = { ...(normalized.text as Record<string, unknown>) };
     delete text.verbosity;
     normalized.text = text;
   }
+
   return normalized;
 }
 
