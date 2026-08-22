@@ -78,7 +78,7 @@ async function generateViaOpenAICompatible(input: VideoGenerationRequest, token:
   const payload: Record<string, unknown> = {
     model,
     reasoning: { effort: process.env.OPENAI_REASONING_EFFORT || 'low' },
-    max_output_tokens: 2200,
+    max_output_tokens: groq ? 1200 : 2200,
     instructions: RENDER_SYSTEM,
     input: renderPrompt(input, modelHint),
     tools: [mcpTool]
