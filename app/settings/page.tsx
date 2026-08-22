@@ -5,6 +5,7 @@ import { ApiActionButton } from '@/app/components/ApiActionButton';
 import { LogoutForm } from '@/app/components/LogoutForm';
 import { getYouTubeConnectionStatus } from '@/src/lib/youtube-auth';
 import { getAutopilotStatus } from '@/src/lib/autopilot';
+import { hasDurableOpenArtOAuthCredential } from '@/src/lib/openart-oauth';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,7 +33,15 @@ export default async function SettingsPage() {
     channelConnections.set(channel.id, status);
   }));
   const youtubeClientConfigured = Boolean(process.env.YOUTUBE_CLIENT_ID && process.env.YOUTUBE_CLIENT_SECRET && process.env.APP_BASE_URL);
-  const openArtConfigured = Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_MODEL && process.env.OPENART_MCP_ACCESS_TOKEN);
+  const durableOpenArt = await hasDurableOpenArtOAuthCredential().catch(() => false);
+  const openArtConfigured = durableOpenArt || Boolean(process.env.OPENART_MCP_ACCESS_TOKEN || process.env.OPENART_MCP_REFRESH_TOKEN);
+  const aiProvider = process.env.AI_PROVIDER || (process.env.OPENAI_API_KEY ? 'openai' : 'anthropic');
+  const creativeDirector = process.env.CREATIVE_DIRECTOR || 'mock';
+  const creativeBadge = creativeDirector === 'openai'
+    ? `OPENAI · ${process.env.OPENAI_MODEL || 'gpt-5.6-terra'}`
+    : creativeDirector === 'anthropic'
+      ? `CLAUDE · ${process.env.ANTHROPIC_MODEL || 'MODEL MISSING'}`
+      : 'MOCK';
   const paidUnlocked = process.env.ALLOW_PAID_GENERATION === 'true';
   const autopilotPaidUnlocked = process.env.ALLOW_AUTOPILOT_PAID_GENERATION === 'true';
   const uploadUnlocked = process.env.ALLOW_YOUTUBE_UPLOAD === 'true';
@@ -92,17 +101,18 @@ export default async function SettingsPage() {
 
           <section className="card">
             <div className="section-title">Provider status</div>
+            <div className="row"><span>AI bridge</span><span className="badge">{aiProvider.toUpperCase()}</span></div>
+            <div className="row"><span>Creative director</span><span className="badge">{creativeBadge.toUpperCase()}</span></div>
             <div className="row"><span>Video generation</span><span className="badge">{(process.env.VIDEO_PROVIDER || 'mock').toUpperCase()}</span></div>
-            <div className="row"><span>OpenArt MCP OAuth</span><span className="badge">{openArtConfigured ? 'CONFIGURED' : 'NOT CONNECTED'}</span></div>
+            <div className="row"><span>OpenArt MCP OAuth</span><span className="badge">{openArtConfigured ? 'DURABLE / CONFIGURED' : 'NOT CONNECTED'}</span></div>
             <div className="row"><span>Paid generation</span><span className="badge">{paidUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
             <div className="row"><span>Autopilot paid generation</span><span className="badge">{autopilotPaidUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
-            <div className="row"><span>Model preference</span><span className="badge">{process.env.VIDEO_MODEL_HINT || 'AUTO'}</span></div>
+            <div className="row"><span>OpenArt model preference</span><span className="badge">{process.env.VIDEO_MODEL_HINT || 'AUTO'}</span></div>
             <div className="row"><span>YouTube OAuth client</span><span className="badge">{youtubeClientConfigured ? 'CONFIGURED' : 'MISSING'}</span></div>
             <div className="row"><span>YouTube upload</span><span className="badge">{uploadUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
             <div className="row"><span>Public publishing</span><span className="badge">{publicUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
             <div className="row"><span>Analytics refresh</span><span className="badge">{process.env.ANALYTICS_SYNC_MINUTES || '30'} MIN</span></div>
             <div className="row"><span>Telegram bot</span><span className="badge">{process.env.TELEGRAM_BOT_TOKEN ? 'CONFIGURED' : 'NOT CONNECTED'}</span></div>
-            <div className="row"><span>Creative director</span><span className="badge">{process.env.CREATIVE_DIRECTOR === 'anthropic' ? 'CLAUDE' : 'MOCK'}</span></div>
           </section>
 
           <section className="card">
