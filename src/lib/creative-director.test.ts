@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { getCreativeDirector, MockCreativeDirector, OpenAICreativeDirector, validateTimeline } from './creative-director';
+import { getCreativeDirector, MockCreativeDirector, normalizeCreativeTitle, OpenAICreativeDirector, validateTimeline } from './creative-director';
 
 describe('creative director', () => {
   afterEach(() => { delete process.env.CREATIVE_DIRECTOR; });
@@ -19,6 +19,14 @@ describe('creative director', () => {
     expect(result.plan.shots[0].startSecond).toBe(0);
     expect(result.plan.shots.at(-1)?.endSecond).toBe(42);
     expect(() => validateTimeline(result.plan, 42)).not.toThrow();
+  });
+
+  it('clamps AI titles that exceed the factory limit', () => {
+    const title = 'A ridiculously long AI-generated title that keeps going far beyond the YouTube factory title limit';
+    const normalized = normalizeCreativeTitle(title);
+    expect(typeof normalized).toBe('string');
+    expect((normalized as string).length).toBeLessThanOrEqual(55);
+    expect(normalized).not.toBe(title);
   });
 
   it('selects OpenAI without making a network call', () => {
