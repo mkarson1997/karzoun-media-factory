@@ -44,6 +44,17 @@ function providerConfig() {
   } as const;
 }
 
+function remoteMcpAllowedToolCount(payload: OpenAIResponsePayload) {
+  if (!Array.isArray(payload.tools)) return null;
+  for (const tool of payload.tools) {
+    if (!tool || typeof tool !== 'object') continue;
+    const record = tool as Record<string, unknown>;
+    if (record.type !== 'mcp') continue;
+    if (Array.isArray(record.allowed_tools)) return record.allowed_tools.length;
+  }
+  return null;
+}
+
 function normalizePayload(payload: OpenAIResponsePayload, provider: ResponsesProvider) {
   if (provider !== 'groq') return payload;
 
@@ -60,20 +71,25 @@ function normalizePayload(payload: OpenAIResponsePayload, provider: ResponsesPro
     normalized.text = text;
   }
 
-  // Remote MCP injects the provider's discovered tool schemas into the model
-  // context. On Groq's free/on-demand tier, qwen/qwen3.6-27b currently has an
-  // 8k TPM ceiling, so a 3k completion budget can make an otherwise valid MCP
-  // request exceed the limit before any OpenArt tool is executed. Keep MCP
-  // completions below that ceiling while leaving ordinary creative-director
-  // requests untouched. Advanced deployments can raise this after upgrading.
   const hasRemoteMcp = Array.isArray(normalized.tools) && normalized.tools.some((tool) => {
     return Boolean(tool && typeof tool === 'object' && (tool as Record<string, unknown>).type === 'mcp');
   });
+
   if (hasRemoteMcp && typeof normalized.max_output_tokens === 'number') {
     const configuredCap = Number(process.env.GROQ_MCP_REQUEST_OUTPUT_CAP);
+    const allowedToolCount = remoteMcpAllowedToolCount(normalized);
+
+    // Unfiltered remote MCP injects every server tool schema into the model
+    // context. Groq Free currently gives the MCP-capable models an 8k TPM
+    // budget, so unfiltered requests need a small completion reserve. Once the
+    // OpenArt adapter has discovered and narrowed the server to a handful of
+    // generation tools, there is enough room for a longer multi-step render.
+    const automaticCap = allowedToolCount !== null && allowedToolCount > 0 && allowedToolCount <= 8
+      ? 3200
+      : 1750;
     const safeCap = Number.isFinite(configuredCap) && configuredCap >= 800 && configuredCap <= 6000
       ? Math.floor(configuredCap)
-      : 1750;
+      : automaticCap;
     normalized.max_output_tokens = Math.min(normalized.max_output_tokens, safeCap);
   }
 
