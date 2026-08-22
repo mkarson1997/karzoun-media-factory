@@ -1,19 +1,21 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { VideoGenerationProvider, VideoGenerationRequest, VideoGenerationResult } from './providers';
+import { getOpenArtAccessToken } from './openart-oauth';
 
 const DEFAULT_OPENART_MCP_URL = 'https://mcp.openart.ai/mcp';
 const MEDIA_URL_RE = /https:\/\/[^\s"'<>]+/g;
 
-function requireOpenArtConfig() {
+async function requireOpenArtConfig() {
   const model = process.env.ANTHROPIC_MODEL;
-  const token = process.env.OPENART_MCP_ACCESS_TOKEN;
   const url = process.env.OPENART_MCP_URL || DEFAULT_OPENART_MCP_URL;
   const allowPaid = process.env.ALLOW_PAID_GENERATION === 'true';
 
   if (!allowPaid) throw new Error('Paid generation is locked. Set ALLOW_PAID_GENERATION=true only when you intentionally want to spend provider credits');
   if (!process.env.ANTHROPIC_API_KEY || !model) throw new Error('OpenArt MCP generation requires ANTHROPIC_API_KEY and ANTHROPIC_MODEL');
-  if (!token) throw new Error('OpenArt MCP generation requires an OAuth access token');
   if (!url.startsWith('https://')) throw new Error('OpenArt MCP URL must use HTTPS');
+
+  const token = await getOpenArtAccessToken();
+  if (!token) throw new Error('OpenArt MCP generation requires an OAuth credential. Import the MCP Inspector OAuth state or configure an access token');
 
   return { model, token, url };
 }
@@ -42,7 +44,7 @@ function chooseVideoUrl(urls: string[]) {
 
 export class OpenArtMcpVideoProvider implements VideoGenerationProvider {
   async generateVideo(input: VideoGenerationRequest): Promise<VideoGenerationResult> {
-    const { model, token, url } = requireOpenArtConfig();
+    const { model, token, url } = await requireOpenArtConfig();
     const client = new Anthropic();
     const modelHint = process.env.VIDEO_MODEL_HINT || 'Choose the best currently available OpenArt video model for this brief.';
 
@@ -91,7 +93,7 @@ export class OpenArtMcpVideoProvider implements VideoGenerationProvider {
 
 export function openArtMcpStatus() {
   return {
-    configured: Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_MODEL && process.env.OPENART_MCP_ACCESS_TOKEN),
+    configured: Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_MODEL && (process.env.OPENART_MCP_ACCESS_TOKEN || process.env.OPENART_MCP_REFRESH_TOKEN)),
     paidGenerationUnlocked: process.env.ALLOW_PAID_GENERATION === 'true',
     serverUrl: process.env.OPENART_MCP_URL || DEFAULT_OPENART_MCP_URL,
     modelHint: process.env.VIDEO_MODEL_HINT || null
