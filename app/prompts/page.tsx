@@ -20,7 +20,12 @@ export default async function PromptsPage({ searchParams }: { searchParams: Prom
       <section className="hero">
         <div className="eyebrow">LIBRARY</div>
         <h1>Prompt Library</h1>
-        <p>Install the built-in 1,000-Short idea bank with one tap, upload another CSV from your phone, or search and queue individual concepts. Kids-only prompts stay isolated from the general channel.</p>
+        <p>Choose ideas, send one into production, and immediately see whether it is queued, generating, waiting for review, scheduled, published or failed. Kids-only prompts stay isolated from the general channel.</p>
+        <div className="hero-actions">
+          <a className="button secondary" href="/queue">Open production queue</a>
+          <a className="button secondary" href="/review">Open review</a>
+          <a className="button secondary" href="/dashboard">Back to control room</a>
+        </div>
       </section>
 
       {databaseReady ? (
@@ -33,6 +38,7 @@ export default async function PromptsPage({ searchParams }: { searchParams: Prom
               body={{}}
               label="✨ Install 1,000 prompts"
               confirmText="Install or refresh the built-in 1,000-prompt bank? Existing matching prompt IDs will be updated, not duplicated."
+              successText="Prompt bank refreshed successfully."
             />
           </div>
         </section>
@@ -51,20 +57,42 @@ export default async function PromptsPage({ searchParams }: { searchParams: Prom
       </form>
 
       <section className="card">
-        <div className="section-title">{prompts.length} prompt{prompts.length === 1 ? '' : 's'} shown</div>
-        {prompts.length ? <div className="list">{prompts.map((prompt) => (
+        <div className="prompt-head">
+          <div className="section-title">{prompts.length} prompt{prompts.length === 1 ? '' : 's'} shown</div>
+          <a className="button secondary" href="/queue">View all jobs</a>
+        </div>
+        {prompts.length ? <div className="list">{prompts.map((prompt) => {
+          const activeJob = prompt.jobs[0];
+          return (
           <article className="prompt-card" key={prompt.id}>
             <div className="prompt-head">
               <div><strong>{prompt.externalPromptId}</strong><small className="block muted">{prompt.category} · {prompt.targetDurationSeconds}s</small></div>
-              <span className="badge">{prompt.channelType === 'KIDS_CHANNEL_ONLY' ? 'KIDS ONLY' : 'GENERAL'}</span>
+              <span className="actions">
+                <span className="badge">{prompt.channelType === 'KIDS_CHANNEL_ONLY' ? 'KIDS ONLY' : 'GENERAL'}</span>
+                {activeJob ? <span className="badge">{activeJob.status}</span> : null}
+              </span>
             </div>
             <p>{prompt.concept}</p>
+            {activeJob ? (
+              <div className="job-state-strip">
+                <span><strong>Production already started</strong><small className="block muted">Provider: {activeJob.provider} · Current state: {activeJob.status}</small></span>
+                <a className="button secondary" href="/queue">Open queue →</a>
+              </div>
+            ) : null}
             <div className="actions">
-              <ApiActionButton endpoint="/api/jobs" body={{ promptId: prompt.id }} label="Queue for production" />
+              {!activeJob ? (
+                <ApiActionButton
+                  endpoint="/api/jobs"
+                  body={{ promptId: prompt.id }}
+                  label="Queue for production"
+                  successText="Queued successfully. Open the production queue →"
+                  successHref="/queue"
+                />
+              ) : null}
               <details><summary className="button secondary">View prompt</summary><pre className="prompt-text">{prompt.fullPrompt}</pre></details>
             </div>
           </article>
-        ))}</div> : <p className="muted">No prompts yet. Install the built-in bank above or upload a compatible CSV.</p>}
+        );})}</div> : <p className="muted">No prompts yet. Install the built-in bank above or upload a compatible CSV.</p>}
       </section>
     </div>
   );
