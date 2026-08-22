@@ -60,6 +60,23 @@ function normalizePayload(payload: OpenAIResponsePayload, provider: ResponsesPro
     normalized.text = text;
   }
 
+  // Remote MCP injects the provider's discovered tool schemas into the model
+  // context. On Groq's free/on-demand tier, qwen/qwen3.6-27b currently has an
+  // 8k TPM ceiling, so a 3k completion budget can make an otherwise valid MCP
+  // request exceed the limit before any OpenArt tool is executed. Keep MCP
+  // completions below that ceiling while leaving ordinary creative-director
+  // requests untouched. Advanced deployments can raise this after upgrading.
+  const hasRemoteMcp = Array.isArray(normalized.tools) && normalized.tools.some((tool) => {
+    return Boolean(tool && typeof tool === 'object' && (tool as Record<string, unknown>).type === 'mcp');
+  });
+  if (hasRemoteMcp && typeof normalized.max_output_tokens === 'number') {
+    const configuredCap = Number(process.env.GROQ_MCP_REQUEST_OUTPUT_CAP);
+    const safeCap = Number.isFinite(configuredCap) && configuredCap >= 800 && configuredCap <= 6000
+      ? Math.floor(configuredCap)
+      : 1750;
+    normalized.max_output_tokens = Math.min(normalized.max_output_tokens, safeCap);
+  }
+
   return normalized;
 }
 
