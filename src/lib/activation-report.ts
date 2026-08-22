@@ -1,5 +1,6 @@
 import { prisma } from './prisma';
 import { getYouTubeConnectionStatus } from './youtube-auth';
+import { hasDurableOpenArtOAuthCredential } from './openart-oauth';
 
 export type ActivationState = 'PASS' | 'ACTION' | 'LOCKED' | 'WARN';
 export type ActivationCheck = { id: string; label: string; state: ActivationState; detail: string; env?: string[]; href?: string; actionLabel?: string };
@@ -20,6 +21,10 @@ function urlOk(value?: string) {
     const url = new URL(value);
     return url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '::1'].includes(url.hostname));
   } catch { return false; }
+}
+
+function selectedAiProvider() {
+  return process.env.AI_PROVIDER || (has(process.env.OPENAI_API_KEY) ? 'openai' : 'anthropic');
 }
 
 export async function getActivationReport(): Promise<ActivationReport> {
@@ -50,8 +55,15 @@ export async function getActivationReport(): Promise<ActivationReport> {
   const telegramA = has(process.env.TELEGRAM_BOT_TOKEN);
   const telegramB = has(process.env.TELEGRAM_ALLOWED_USER_ID);
   const telegramConfigured = telegramA && telegramB;
+  const openAiConfigured = has(process.env.OPENAI_API_KEY);
   const anthropicConfigured = has(process.env.ANTHROPIC_API_KEY) && has(process.env.ANTHROPIC_MODEL);
-  const openArtConfigured = anthropicConfigured && has(process.env.OPENART_MCP_ACCESS_TOKEN) && has(process.env.OPENART_MCP_URL);
+  const creativeDirector = process.env.CREATIVE_DIRECTOR || 'mock';
+  const aiProvider = selectedAiProvider();
+  const creativeConfiguredByEnv = creativeDirector === 'openai' ? openAiConfigured : creativeDirector === 'anthropic' ? anthropicConfigured : creativeDirector === 'mock';
+  const bridgeConfigured = aiProvider === 'openai' ? openAiConfigured : anthropicConfigured;
+  const durableOpenArt = await hasDurableOpenArtOAuthCredential().catch(() => false);
+  const openArtOAuthConfigured = durableOpenArt || has(process.env.OPENART_MCP_ACCESS_TOKEN) || has(process.env.OPENART_MCP_REFRESH_TOKEN);
+  const openArtConfigured = bridgeConfigured && openArtOAuthConfigured && has(process.env.OPENART_MCP_URL);
   const youtubeClientConfigured = has(process.env.YOUTUBE_CLIENT_ID) && has(process.env.YOUTUBE_CLIENT_SECRET) && appBaseUrlOk && appSecretOk;
   const general = channels.filter((c) => c.enabled && c.type === 'GENERAL');
   const kids = channels.filter((c) => c.enabled && c.type === 'KIDS_CHANNEL_ONLY');
@@ -63,6 +75,7 @@ export async function getActivationReport(): Promise<ActivationReport> {
   const autoPaid = process.env.ALLOW_AUTOPILOT_PAID_GENERATION === 'true';
   const upload = process.env.ALLOW_YOUTUBE_UPLOAD === 'true';
   const publicPublish = process.env.ALLOW_PUBLIC_PUBLISHING === 'true';
+  const creativeLabel = creativeDirector === 'openai' ? `OpenAI (${process.env.OPENAI_MODEL || 'gpt-5.6-terra'})` : creativeDirector === 'anthropic' ? `Claude (${process.env.ANTHROPIC_MODEL || 'model missing'})` : 'Mock';
 
   const checks: ActivationCheck[] = [
     { id: 'database', label: 'Database', state: databaseReady ? 'PASS' : 'ACTION', detail: databaseReady ? 'PostgreSQL is reachable.' : 'Set DATABASE_URL and initialize the database.', env: databaseReady ? undefined : ['DATABASE_URL'] },
@@ -71,8 +84,8 @@ export async function getActivationReport(): Promise<ActivationReport> {
     { id: 'channel-general', label: 'General channel record', state: general.length ? 'PASS' : 'ACTION', detail: general.length ? `${general.length} enabled GENERAL channel record(s).` : 'Create or seed a GENERAL channel.', href: general.length ? undefined : '/settings', actionLabel: general.length ? undefined : 'Open Settings' },
     { id: 'prompt-bank', label: 'Prompt bank', state: generalPrompts ? 'PASS' : 'ACTION', detail: generalPrompts ? `${prompts} active prompts: ${generalPrompts} general, ${kidsPrompts} kids.` : 'Install the built-in 1,000-prompt bank.', href: generalPrompts ? undefined : '/prompts', actionLabel: generalPrompts ? undefined : 'Open Prompt Library' },
     { id: 'telegram', label: 'Telegram remote control', state: telegramConfigured ? 'PASS' : telegramA !== telegramB ? 'WARN' : 'ACTION', detail: telegramConfigured ? 'Bot token and allowlisted operator ID are configured.' : telegramA !== telegramB ? 'Telegram is only half configured.' : 'Configure Telegram for phone control.', env: telegramConfigured ? undefined : ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALLOWED_USER_ID'] },
-    { id: 'claude', label: 'Claude creative director', state: anthropicConfigured ? 'PASS' : 'ACTION', detail: anthropicConfigured ? `Configured (${process.env.ANTHROPIC_MODEL}).` : 'Add Anthropic key and model.', env: anthropicConfigured ? undefined : ['ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL'] },
-    { id: 'openart', label: 'OpenArt MCP video generation', state: openArtConfigured ? paid ? 'PASS' : 'LOCKED' : 'ACTION', detail: openArtConfigured ? paid ? 'Configured and paid generation unlocked.' : 'Configured; spending remains intentionally locked.' : 'Configure OpenArt MCP OAuth.', env: openArtConfigured ? undefined : ['OPENART_MCP_ACCESS_TOKEN', 'OPENART_MCP_URL'] },
+    { id: 'ai-director', label: 'AI creative director', state: creativeConfiguredByEnv && creativeDirector !== 'mock' ? 'PASS' : 'ACTION', detail: creativeDirector === 'mock' ? 'Select OpenAI or Anthropic for live creative planning.' : `Configured: ${creativeLabel}.`, env: creativeConfiguredByEnv && creativeDirector !== 'mock' ? undefined : creativeDirector === 'anthropic' ? ['ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL'] : ['OPENAI_API_KEY', 'OPENAI_MODEL'] },
+    { id: 'openart', label: 'OpenArt MCP video generation', state: openArtConfigured ? paid ? 'PASS' : 'LOCKED' : 'ACTION', detail: openArtConfigured ? `${aiProvider.toUpperCase()} bridge + OpenArt OAuth configured${paid ? '; paid generation unlocked.' : '; spending remains intentionally locked.'}` : 'Configure the selected AI bridge and OpenArt MCP OAuth.', env: openArtConfigured ? undefined : [aiProvider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY', 'OPENART_MCP_URL'] },
     { id: 'youtube-client', label: 'YouTube OAuth client', state: youtubeClientConfigured ? 'PASS' : 'ACTION', detail: youtubeClientConfigured ? 'Google OAuth client is ready.' : 'Configure the Google OAuth client.', env: youtubeClientConfigured ? undefined : ['YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET'] },
     { id: 'youtube-general', label: 'General YouTube channel', state: generalYouTubeReady ? 'PASS' : youtubeClientConfigured && general.length ? 'ACTION' : 'LOCKED', detail: generalYouTubeReady ? 'GENERAL channel is OAuth-bound.' : youtubeClientConfigured && general.length ? 'Connect the GENERAL channel.' : 'Waiting for OAuth client/channel.', href: youtubeClientConfigured && general.length && !generalYouTubeReady ? '/settings' : undefined, actionLabel: youtubeClientConfigured && general.length && !generalYouTubeReady ? 'Connect YouTube' : undefined },
     { id: 'youtube-kids', label: 'Kids YouTube isolation', state: !kids.length ? 'LOCKED' : kidsYouTubeReady ? 'PASS' : 'ACTION', detail: !kids.length ? 'No kids channel yet; kids production stays isolated.' : kidsYouTubeReady ? 'Every kids channel has its own connection.' : 'Connect each kids channel separately.', href: kids.length && !kidsYouTubeReady ? '/settings' : undefined, actionLabel: kids.length && !kidsYouTubeReady ? 'Connect Kids Channel' : undefined },
@@ -82,7 +95,7 @@ export async function getActivationReport(): Promise<ActivationReport> {
   ];
 
   const mockReady = databaseReady && appSecretOk && appBaseUrlOk && general.length > 0 && generalPrompts > 0;
-  const creativeConfigured = mockReady && anthropicConfigured;
+  const creativeConfigured = mockReady && creativeConfiguredByEnv && creativeDirector !== 'mock';
   const realRenderConfigured = creativeConfigured && openArtConfigured && video === 'openart-mcp';
   const privateYouTubeConfigured = mockReady && youtubeClientConfigured && generalYouTubeReady && publishing === 'youtube';
   const paidAutopilotReady = realRenderConfigured && paid && autoPaid;
