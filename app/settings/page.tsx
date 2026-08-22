@@ -35,13 +35,15 @@ export default async function SettingsPage() {
   const youtubeClientConfigured = Boolean(process.env.YOUTUBE_CLIENT_ID && process.env.YOUTUBE_CLIENT_SECRET && process.env.APP_BASE_URL);
   const durableOpenArt = await hasDurableOpenArtOAuthCredential().catch(() => false);
   const openArtConfigured = durableOpenArt || Boolean(process.env.OPENART_MCP_ACCESS_TOKEN || process.env.OPENART_MCP_REFRESH_TOKEN);
-  const aiProvider = process.env.AI_PROVIDER || (process.env.OPENAI_API_KEY ? 'openai' : 'anthropic');
+  const aiProvider = process.env.AI_PROVIDER || (process.env.GROQ_API_KEY ? 'groq' : process.env.OPENAI_API_KEY ? 'openai' : 'anthropic');
   const creativeDirector = process.env.CREATIVE_DIRECTOR || 'mock';
-  const creativeBadge = creativeDirector === 'openai'
-    ? `OPENAI · ${process.env.OPENAI_MODEL || 'gpt-5.6-terra'}`
-    : creativeDirector === 'anthropic'
-      ? `CLAUDE · ${process.env.ANTHROPIC_MODEL || 'MODEL MISSING'}`
-      : 'MOCK';
+  const creativeBadge = creativeDirector === 'groq'
+    ? `GROQ · ${process.env.GROQ_MODEL || 'openai/gpt-oss-120b'}`
+    : creativeDirector === 'openai'
+      ? `OPENAI · ${process.env.OPENAI_MODEL || 'gpt-5.6-terra'}`
+      : creativeDirector === 'anthropic'
+        ? `CLAUDE · ${process.env.ANTHROPIC_MODEL || 'MODEL MISSING'}`
+        : 'MOCK';
   const paidUnlocked = process.env.ALLOW_PAID_GENERATION === 'true';
   const autopilotPaidUnlocked = process.env.ALLOW_AUTOPILOT_PAID_GENERATION === 'true';
   const uploadUnlocked = process.env.ALLOW_YOUTUBE_UPLOAD === 'true';
