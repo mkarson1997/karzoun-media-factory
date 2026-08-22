@@ -87,17 +87,30 @@ export default async function DashboardPage() {
   const generationMode = process.env.VIDEO_PROVIDER || 'mock';
   const publishingMode = process.env.PUBLISHING_PROVIDER || 'mock';
 
+  const controlMap = [
+    ['💡 Prompt Library', '/prompts', 'Choose or inspect ideas and send one into production.'],
+    ['⚙️ Production Queue', '/queue', 'See every job and its exact state: queued, generating, failed, review-ready and more.'],
+    ['👁 Review', '/review', 'Watch generated videos, approve, reject or regenerate.'],
+    ['🗓 Schedule', '/schedule', 'Choose publish time and visibility after approval.'],
+    ['📈 Analytics', '/analytics', 'Track YouTube performance and learning signals.'],
+    ['🚀 Setup', '/setup', 'See every connection, safety lock and launch requirement.'],
+    ['🔧 Settings', '/settings', 'Channels, Autopilot, limits, providers and factory controls.']
+  ] as const;
+
   return (
     <div className="page">
       <section className="hero">
         <div className="eyebrow">CONTROL ROOM</div>
         <h1>Factory status</h1>
-        <p>Generation, review, smart scheduling, YouTube publishing and analytics from one mobile control room.</p>
+        <p>Generation, review, smart scheduling, YouTube publishing and analytics from one control room. No production screen is hidden: every factory surface is linked below and in the main navigation.</p>
         <div className="hero-actions">
-          <a className="button" href="/prompts">Open Prompt Library</a>
-          <a className="button secondary" href="/review">Review queue</a>
-          <a className="button secondary" href="/schedule">Schedule</a>
-          <a className="button secondary" href="/analytics">Analytics</a>
+          <a className="button" href="/prompts">💡 Prompt Library</a>
+          <a className="button secondary" href="/queue">⚙️ Queue</a>
+          <a className="button secondary" href="/review">👁 Review</a>
+          <a className="button secondary" href="/schedule">🗓 Schedule</a>
+          <a className="button secondary" href="/analytics">📈 Analytics</a>
+          <a className="button secondary" href="/setup">🚀 Setup</a>
+          <a className="button secondary" href="/settings">🔧 Settings</a>
         </div>
       </section>
 
@@ -108,6 +121,19 @@ export default async function DashboardPage() {
         {stats.map(([label, value]) => (
           <div className="card" key={label}><div className="metric">{value}</div><div className="label">{label}</div></div>
         ))}
+      </section>
+
+      <section className="card">
+        <div className="section-title">🧭 Factory map</div>
+        <p className="muted">Everything you can operate is visible here. Pick a stage and jump straight to it.</p>
+        <div className="control-map">
+          {controlMap.map(([label, href, description]) => (
+            <a className="control-map-link" href={href} key={href}>
+              <strong>{label}</strong>
+              <small>{description}</small>
+            </a>
+          ))}
+        </div>
       </section>
 
       {autopilot ? <section className="card">
