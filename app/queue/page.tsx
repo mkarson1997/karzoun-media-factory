@@ -1,5 +1,6 @@
 import { listJobs } from '@/src/lib/control-plane';
 import { ApiActionButton } from '@/app/components/ApiActionButton';
+import { AutoRefresh } from '@/app/components/AutoRefresh';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,10 +12,15 @@ export default async function QueuePage() {
   return (
     <div className="page">
       <section className="hero">
-        <div className="eyebrow">PRODUCTION</div>
-        <h1>Queue</h1>
-        <p>Manual and autopilot jobs share the same validated state machine, review gate, limits and provider safety locks.</p>
-        <div className="hero-actions"><a className="button" href="/prompts">Queue another prompt</a><a className="button secondary" href="/dashboard">Autopilot controls</a></div>
+        <div className="prompt-head">
+          <div>
+            <div className="eyebrow">PRODUCTION</div>
+            <h1>Queue</h1>
+          </div>
+          <AutoRefresh seconds={5} />
+        </div>
+        <p>Manual and autopilot jobs share the same validated state machine, review gate, limits and provider safety locks. This screen refreshes automatically while live jobs move through the factory.</p>
+        <div className="hero-actions"><a className="button" href="/prompts">Queue another prompt</a><a className="button secondary" href="/review">Open review</a><a className="button secondary" href="/dashboard">Control room</a></div>
       </section>
 
       {!databaseReady ? <div className="notice">Database is not configured.</div> : null}
@@ -33,6 +39,7 @@ export default async function QueuePage() {
             <div className="row"><span>Provider</span><span className="badge">{job.provider.toUpperCase()}</span></div>
             {job.schedule ? <div className="row"><span>Publish slot<small className="block muted">{job.schedule.timezone} · {job.schedule.visibility}</small></span><span className="badge">{job.schedule.publishAt.toLocaleString()}</span></div> : null}
             {!mockJob && (job.status === 'QUEUED' || job.status === 'GENERATING') ? <p className="muted">Live-provider state is worker-owned. The dashboard cannot fake completion or skip the renderer.</p> : null}
+            {job.failureReason ? <div className="notice"><strong>Failure:</strong> {job.failureReason}</div> : null}
             <div className="actions">
               {mockJob && job.status === 'QUEUED' ? <ApiActionButton endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'GENERATING' }} label="Start mock generation" /> : null}
               {mockJob && job.status === 'GENERATING' ? <ApiActionButton endpoint={`/api/jobs/${job.id}/transition`} body={{ to: 'READY_FOR_REVIEW' }} label="Finish mock generation" /> : null}
@@ -43,7 +50,7 @@ export default async function QueuePage() {
               {job.status === 'APPROVED' ? <a className="button secondary" href={`/schedule?job=${job.id}`}>Choose time</a> : null}
             </div>
           </article>
-        );})}</div> : <p className="muted">Queue is empty.</p>}
+        );})}</div> : <p className="muted">Queue is empty. Pick an idea from Prompt Library.</p>}
       </section>
     </div>
   );
