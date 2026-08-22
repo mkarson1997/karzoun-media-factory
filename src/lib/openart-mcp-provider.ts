@@ -7,7 +7,7 @@ const DEFAULT_OPENART_MCP_URL = 'https://mcp.openart.ai/mcp';
 const MEDIA_URL_RE = /https:\/\/[^\s"'<>]+/g;
 
 function selectedAiProvider() {
-  return process.env.AI_PROVIDER || (process.env.OPENAI_API_KEY ? 'openai' : 'anthropic');
+  return process.env.AI_PROVIDER || (process.env.GROQ_API_KEY ? 'groq' : process.env.OPENAI_API_KEY ? 'openai' : 'anthropic');
 }
 
 async function requireOpenArtConfig() {
@@ -16,8 +16,10 @@ async function requireOpenArtConfig() {
   const aiProvider = selectedAiProvider();
 
   if (!allowPaid) throw new Error('Paid generation is locked. Set ALLOW_PAID_GENERATION=true only when you intentionally want to spend provider credits');
+  if (aiProvider === 'groq' && !process.env.GROQ_API_KEY) throw new Error('OpenArt MCP via Groq requires GROQ_API_KEY');
   if (aiProvider === 'openai' && !process.env.OPENAI_API_KEY) throw new Error('OpenArt MCP via OpenAI requires OPENAI_API_KEY');
   if (aiProvider === 'anthropic' && (!process.env.ANTHROPIC_API_KEY || !process.env.ANTHROPIC_MODEL)) throw new Error('OpenArt MCP via Anthropic requires ANTHROPIC_API_KEY and ANTHROPIC_MODEL');
+  if (!['groq', 'openai', 'anthropic'].includes(aiProvider)) throw new Error(`Unsupported AI bridge: ${aiProvider}`);
   if (!url.startsWith('https://')) throw new Error('OpenArt MCP URL must use HTTPS');
 
   const token = await getOpenArtAccessToken();
@@ -53,7 +55,7 @@ function renderPrompt(input: VideoGenerationRequest, modelHint: string) {
 
 const RENDER_SYSTEM = 'You are the rendering operator for Karzoun Media Factory. Use the connected OpenArt MCP tools to create exactly one original vertical video from the supplied production brief. Do not imitate copyrighted characters, channels, celebrities, logos, or creator footage. Use only original or properly generated media. Wait for the OpenArt generation result when the tool supports it. Do not claim success unless the tool actually returns a completed asset.';
 
-async function generateViaOpenAI(input: VideoGenerationRequest, token: string, url: string, modelHint: string) {
+async function generateViaOpenAICompatible(input: VideoGenerationRequest, token: string, url: string, modelHint: string) {
   const model = selectedOpenAIModel();
   const response = await createOpenAIResponse({
     model,
@@ -71,7 +73,8 @@ async function generateViaOpenAI(input: VideoGenerationRequest, token: string, u
     tool_choice: 'required',
     text: { verbosity: 'low' }
   });
-  return { id: typeof response.id === 'string' ? response.id : `openai-${input.jobId}`, payload: response };
+  const prefix = selectedAiProvider() === 'groq' ? 'groq' : 'openai';
+  return { id: typeof response.id === 'string' ? response.id : `${prefix}-${input.jobId}`, payload: response };
 }
 
 async function generateViaAnthropic(input: VideoGenerationRequest, token: string, url: string, modelHint: string) {
@@ -94,9 +97,9 @@ export class OpenArtMcpVideoProvider implements VideoGenerationProvider {
   async generateVideo(input: VideoGenerationRequest): Promise<VideoGenerationResult> {
     const { aiProvider, token, url } = await requireOpenArtConfig();
     const modelHint = process.env.VIDEO_MODEL_HINT || 'Choose the best currently available OpenArt video model for this brief.';
-    const result = aiProvider === 'openai'
-      ? await generateViaOpenAI(input, token, url, modelHint)
-      : await generateViaAnthropic(input, token, url, modelHint);
+    const result = aiProvider === 'anthropic'
+      ? await generateViaAnthropic(input, token, url, modelHint)
+      : await generateViaOpenAICompatible(input, token, url, modelHint);
 
     const videoUrl = chooseVideoUrl(collectUrls(result.payload));
     if (!videoUrl) throw new Error(`OpenArt MCP via ${aiProvider} completed without a usable video asset URL`);
@@ -115,9 +118,11 @@ export class OpenArtMcpVideoProvider implements VideoGenerationProvider {
 
 export function openArtMcpStatus() {
   const aiProvider = selectedAiProvider();
-  const aiConfigured = aiProvider === 'openai'
-    ? Boolean(process.env.OPENAI_API_KEY)
-    : Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_MODEL);
+  const aiConfigured = aiProvider === 'groq'
+    ? Boolean(process.env.GROQ_API_KEY)
+    : aiProvider === 'openai'
+      ? Boolean(process.env.OPENAI_API_KEY)
+      : Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_MODEL);
   return {
     configured: aiConfigured && Boolean(process.env.OPENART_MCP_URL || DEFAULT_OPENART_MCP_URL),
     aiProvider,
