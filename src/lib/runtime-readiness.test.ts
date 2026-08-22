@@ -25,9 +25,23 @@ describe('runtime readiness', () => {
     expect(checks.find((item) => item.name === 'Public publishing interlock')?.ok).toBe(false);
   });
 
-  it('rejects OpenArt MCP without all provider credentials', () => {
-    const checks = evaluateRuntimeSafety({ ...base, VIDEO_PROVIDER: 'openart-mcp' });
+  it('rejects OpenArt MCP without the selected AI bridge credentials', () => {
+    const checks = evaluateRuntimeSafety({ ...base, VIDEO_PROVIDER: 'openart-mcp', AI_PROVIDER: 'openai' });
     expect(readinessSummary(checks).ready).toBe(false);
+  });
+
+  it('accepts OpenAI as the creative director and OpenArt MCP bridge', () => {
+    const checks = evaluateRuntimeSafety({
+      ...base,
+      AI_PROVIDER: 'openai',
+      CREATIVE_DIRECTOR: 'openai',
+      OPENAI_API_KEY: 'test-key',
+      OPENAI_MODEL: 'gpt-5.6-terra',
+      VIDEO_PROVIDER: 'openart-mcp'
+    });
+    expect(readinessSummary(checks).ready).toBe(true);
+    expect(checks.find((item) => item.name === 'AI creative director')?.ok).toBe(true);
+    expect(checks.find((item) => item.name === 'OpenArt MCP configuration')?.ok).toBe(true);
   });
 
   it('rejects autopilot paid unlock unless general paid generation and a real provider are enabled', () => {
@@ -36,15 +50,16 @@ describe('runtime readiness', () => {
     expect(checks.find((item) => item.name === 'Autopilot paid generation interlock')?.ok).toBe(false);
   });
 
-  it('accepts the autopilot paid unlock only with a configured real provider', () => {
+  it('accepts the autopilot paid unlock with OpenAI and a configured real provider', () => {
     const checks = evaluateRuntimeSafety({
       ...base,
+      AI_PROVIDER: 'openai',
+      CREATIVE_DIRECTOR: 'openai',
+      OPENAI_API_KEY: 'test-key',
+      OPENAI_MODEL: 'gpt-5.6-terra',
       VIDEO_PROVIDER: 'openart-mcp',
       ALLOW_PAID_GENERATION: 'true',
-      ALLOW_AUTOPILOT_PAID_GENERATION: 'true',
-      ANTHROPIC_API_KEY: 'test-key',
-      ANTHROPIC_MODEL: 'test-model',
-      OPENART_MCP_ACCESS_TOKEN: 'test-token'
+      ALLOW_AUTOPILOT_PAID_GENERATION: 'true'
     });
     expect(readinessSummary(checks).ready).toBe(true);
   });
