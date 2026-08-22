@@ -2,14 +2,17 @@ import { z } from 'zod';
 import { prisma } from '../src/lib/prisma';
 import { storeOpenArtOAuthCredential } from '../src/lib/openart-oauth';
 
+const optionalString = z.string().min(1).nullable().optional().transform((value) => value ?? undefined);
+const optionalUrl = z.string().url().nullable().optional().transform((value) => value ?? undefined);
+
 const schema = z.object({
-  accessToken: z.string().min(1).optional(),
-  refreshToken: z.string().min(1).optional(),
-  clientId: z.string().min(1).optional(),
-  clientSecret: z.string().min(1).optional(),
-  tokenEndpoint: z.string().url().optional(),
-  scope: z.string().min(1).optional(),
-  tokenEndpointAuthMethod: z.string().min(1).optional()
+  accessToken: optionalString,
+  refreshToken: optionalString,
+  clientId: optionalString,
+  clientSecret: optionalString,
+  tokenEndpoint: optionalUrl,
+  scope: optionalString,
+  tokenEndpointAuthMethod: optionalString
 }).refine((value) => Boolean(value.accessToken || value.refreshToken), {
   message: 'Expected an access token or refresh token'
 });
