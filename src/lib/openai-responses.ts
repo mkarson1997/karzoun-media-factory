@@ -55,26 +55,58 @@ function normalizePayload(payload: OpenAIResponsePayload, provider: ResponsesPro
   return normalized;
 }
 
+function groqRetryDelayMs(response: Response, body: unknown) {
+  const retryAfter = response.headers.get('retry-after');
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000) + 750;
+  }
+
+  const message = extractErrorMessage(body) || '';
+  const match = message.match(/try again in\s+([\d.]+)s/i);
+  if (match) return Math.ceil(Number(match[1]) * 1000) + 750;
+  return 20_000;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function createOpenAIResponse(payload: OpenAIResponsePayload) {
   const config = providerConfig();
-  const response = await fetch(config.endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(normalizePayload(payload, config.provider)),
-    signal: AbortSignal.timeout(15 * 60 * 1000)
-  });
+  const normalizedPayload = normalizePayload(payload, config.provider);
+  const maxAttempts = config.provider === 'groq' ? 3 : 1;
 
-  const body = await response.json().catch(() => null) as unknown;
-  if (!response.ok) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const response = await fetch(config.endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(normalizedPayload),
+      signal: AbortSignal.timeout(15 * 60 * 1000)
+    });
+
+    const body = await response.json().catch(() => null) as unknown;
+    if (response.ok) {
+      if (!body || typeof body !== 'object') throw new Error('Responses API returned an invalid response');
+      return body as Record<string, unknown>;
+    }
+
+    if (config.provider === 'groq' && response.status === 429 && attempt < maxAttempts) {
+      const delayMs = Math.min(65_000, Math.max(1_000, groqRetryDelayMs(response, body)));
+      console.warn(`Groq rate limit reached. Retrying automatically in ${Math.ceil(delayMs / 1000)}s (${attempt}/${maxAttempts - 1}).`);
+      await sleep(delayMs);
+      continue;
+    }
+
     const label = config.provider === 'groq' ? 'Groq' : 'OpenAI';
     const message = extractErrorMessage(body) || `${label} Responses API returned HTTP ${response.status}`;
     throw new Error(`${label} API: ${message}`);
   }
-  if (!body || typeof body !== 'object') throw new Error('Responses API returned an invalid response');
-  return body as Record<string, unknown>;
+
+  throw new Error('Responses API retry loop exited unexpectedly');
 }
 
 export function getOpenAIOutputText(response: Record<string, unknown>) {
