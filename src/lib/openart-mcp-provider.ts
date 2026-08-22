@@ -54,6 +54,13 @@ function getMcpCalls(payload: unknown) {
   return output.filter((item): item is JsonRecord => Boolean(item && typeof item === 'object' && (item as JsonRecord).type === 'mcp_call'));
 }
 
+function getResponseMessages(payload: unknown) {
+  if (!payload || typeof payload !== 'object') return [] as JsonRecord[];
+  const output = (payload as JsonRecord).output;
+  if (!Array.isArray(output)) return [] as JsonRecord[];
+  return output.filter((item): item is JsonRecord => Boolean(item && typeof item === 'object' && (item as JsonRecord).type === 'message'));
+}
+
 function collectUrlsFromMcpCalls(calls: JsonRecord[]) {
   const found = new Set<string>();
   for (const call of calls) {
@@ -66,7 +73,19 @@ function collectUrlsFromMcpCalls(calls: JsonRecord[]) {
   return [...found];
 }
 
-function chooseVideoUrl(urls: string[], mcpServerUrl: string) {
+function collectUrlsFromResponseMessages(payload: unknown) {
+  const found = new Set<string>();
+  for (const message of getResponseMessages(payload)) {
+    // Groq's server-side MCP orchestration may put the finished asset URL only
+    // in the final assistant message after it has consumed the MCP tool output.
+    // Scanning message content is safe because the MCP server definition and
+    // original prompt live outside these message items.
+    collectUrls(message.content, found);
+  }
+  return [...found];
+}
+
+function videoUrlCandidates(urls: string[], mcpServerUrl: string) {
   const server = mcpServerUrl.replace(/\/$/, '');
   const candidates = urls.filter((url) => {
     const normalized = url.replace(/\/$/, '');
@@ -80,9 +99,9 @@ function chooseVideoUrl(urls: string[], mcpServerUrl: string) {
     return true;
   });
 
-  const direct = candidates.find((url) => /\.(mp4|webm|mov)(?:\?|$)/i.test(url));
-  if (direct) return direct;
-  return candidates.find((url) => /(cdn|media|video|output|asset|download|generation)/i.test(url));
+  const direct = candidates.filter((url) => /\.(mp4|webm|mov)(?:\?|$)/i.test(url));
+  const likely = candidates.filter((url) => !direct.includes(url) && /(cdn|media|video|output|asset|download|generation)/i.test(url));
+  return [...direct, ...likely];
 }
 
 async function verifyPlayableVideoUrl(rawUrl: string) {
@@ -91,15 +110,31 @@ async function verifyPlayableVideoUrl(rawUrl: string) {
   return media.finalUrl;
 }
 
+async function findPlayableVideoUrl(urls: string[], mcpServerUrl: string) {
+  const candidates = videoUrlCandidates(urls, mcpServerUrl);
+  let lastError: Error | null = null;
+
+  for (const candidate of candidates) {
+    try {
+      return await verifyPlayableVideoUrl(candidate);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('unknown media validation error');
+    }
+  }
+
+  if (!candidates.length) return null;
+  throw new Error(`OpenArt returned ${candidates.length} candidate media URL(s), but none were playable: ${lastError?.message || 'unknown media validation error'}`);
+}
+
 function renderPrompt(input: VideoGenerationRequest, modelHint: string, retry = false) {
   const retryInstruction = retry
     ? '\nMANDATORY RETRY: The previous model response did not execute an MCP tool. Do not return any explanatory text first. Discover the OpenArt MCP tools and immediately call the appropriate video-generation tool. A response without an MCP call is a failure.'
     : '';
 
-  return `Render production job ${input.jobId}.\nTarget duration: ${input.durationSeconds} seconds.\nAspect ratio: 9:16 vertical.\nModel preference: ${modelHint}\n\nCreative production plan:\n${input.prompt}\n\nYou MUST use the OpenArt MCP server to generate the finished video. Do not answer with instructions, documentation links, the MCP server URL, or a hypothetical result. If a single generation cannot cover the full requested duration, use the provider's supported continuation/extension workflow while preserving continuity. Continue using OpenArt tools until a completed video asset is returned.${retryInstruction}`;
+  return `Render production job ${input.jobId}.\nTarget duration: ${input.durationSeconds} seconds.\nAspect ratio: 9:16 vertical.\nModel preference: ${modelHint}\n\nCreative production plan:\n${input.prompt}\n\nYou MUST use the OpenArt MCP server to generate the finished video. Do not answer with instructions, documentation links, the MCP server URL, or a hypothetical result. If a single generation cannot cover the full requested duration, use the provider's supported continuation/extension workflow while preserving continuity. Continue using OpenArt tools until a completed video asset is returned. When OpenArt returns the finished asset, include its direct downloadable/video URL in your final response so the factory can validate it.${retryInstruction}`;
 }
 
-const RENDER_SYSTEM = 'You are the rendering operator for Karzoun Media Factory. You must execute at least one connected OpenArt MCP tool for every render request. Create exactly one original vertical video from the supplied production brief. Do not imitate copyrighted characters, channels, celebrities, logos, or creator footage. Use only original or properly generated media. Wait for OpenArt generation to complete when the tools support it. Never claim success from tool discovery, documentation, a server URL, or a textual answer. Success requires a completed playable video asset returned by an OpenArt MCP tool.';
+const RENDER_SYSTEM = 'You are the rendering operator for Karzoun Media Factory. You must execute at least one connected OpenArt MCP tool for every render request. Create exactly one original vertical video from the supplied production brief. Do not imitate copyrighted characters, channels, celebrities, logos, or creator footage. Use only original or properly generated media. Wait for OpenArt generation to complete when the tools support it. Never claim success from tool discovery, documentation, a server URL, or a textual answer. Success requires a completed playable video asset returned by an OpenArt MCP tool. After completion, expose the finished asset direct URL in the final response so the factory can validate and review it.';
 
 async function generateViaOpenAICompatible(input: VideoGenerationRequest, token: string, url: string, modelHint: string) {
   const groq = selectedAiProvider() === 'groq';
@@ -110,7 +145,7 @@ async function generateViaOpenAICompatible(input: VideoGenerationRequest, token:
     ? {
         type: 'mcp',
         server_label: 'openart',
-        server_description: 'OpenArt production tools for creating actual images and videos. For this request, discover and execute the video-generation tool and return the completed video asset. Do not answer without calling OpenArt.',
+        server_description: 'OpenArt production tools for creating actual images and videos. For this request, discover and execute the video-generation tool, wait for completion, and return the completed video asset direct URL. Do not answer without calling OpenArt.',
         server_url: url,
         headers: { Authorization: `Bearer ${token}` },
         require_approval: 'never'
@@ -194,22 +229,31 @@ export class OpenArtMcpVideoProvider implements VideoGenerationProvider {
       if (!mcpCalls.length) {
         throw new Error(`OpenArt MCP via ${aiProvider} returned no MCP tool execution after automatic retry. The render was not started and no OpenArt credits should have been spent.`);
       }
-      urls = collectUrlsFromMcpCalls(mcpCalls);
+
+      urls = [...new Set([
+        ...collectUrlsFromMcpCalls(mcpCalls),
+        ...collectUrlsFromResponseMessages(result.payload)
+      ])];
+
       if (!urls.length) {
-        throw new Error(`OpenArt MCP via ${aiProvider} executed ${mcpCalls.length} MCP call(s) but returned no media URL. The render is not complete.`);
+        const names = [...new Set(mcpCalls.map((call) => typeof call.name === 'string' ? call.name : null).filter((name): name is string => Boolean(name)))];
+        const status = result.payload && typeof result.payload === 'object' && typeof (result.payload as JsonRecord).status === 'string'
+          ? String((result.payload as JsonRecord).status)
+          : 'unknown';
+        const calls = names.length ? ` Tools: ${names.slice(0, 8).join(', ')}.` : '';
+        throw new Error(`OpenArt MCP via ${aiProvider} executed ${mcpCalls.length} MCP call(s) but returned no media URL in either tool results or the final assistant message. Response status: ${status}.${calls} The render is not complete.`);
       }
     }
 
-    const candidateUrl = chooseVideoUrl(urls, url);
-    if (!candidateUrl) throw new Error(`OpenArt MCP via ${aiProvider} completed without a usable video asset URL`);
-
-    let videoUrl: string;
+    let videoUrl: string | null;
     try {
-      videoUrl = await verifyPlayableVideoUrl(candidateUrl);
+      videoUrl = await findPlayableVideoUrl(urls, url);
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'unknown media validation error';
-      throw new Error(`OpenArt MCP returned a non-playable media URL: ${reason}`);
+      throw new Error(`OpenArt MCP media validation failed: ${reason}`);
     }
+
+    if (!videoUrl) throw new Error(`OpenArt MCP via ${aiProvider} completed without a usable video asset URL`);
 
     return { providerJobId: result.id, status: 'READY_FOR_REVIEW', videoUrl };
   }
