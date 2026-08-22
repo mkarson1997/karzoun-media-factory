@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
-import { createOpenAIResponse, getOpenAIOutputText, selectedOpenAIModel } from './openai-responses';
+import { createOpenAIResponse, getOpenAIOutputText, responsesProviderConfigured, selectedOpenAIModel, selectedResponsesProvider } from './openai-responses';
 
 export const creativePlanSchema = z.object({
   hook: z.string().min(1).max(220),
@@ -92,7 +92,10 @@ export class MockCreativeDirector implements CreativeDirector {
 
 export class OpenAICreativeDirector implements CreativeDirector {
   async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
-    if (!process.env.OPENAI_API_KEY) throw new Error('OpenAI creative director is enabled but OPENAI_API_KEY is missing');
+    if (!responsesProviderConfigured()) {
+      const provider = selectedResponsesProvider();
+      throw new Error(`${provider === 'groq' ? 'Groq' : 'OpenAI'} creative director credentials are missing`);
+    }
     const model = selectedOpenAIModel();
     const response = await createOpenAIResponse({
       model,
@@ -105,6 +108,8 @@ export class OpenAICreativeDirector implements CreativeDirector {
     return { model, plan: parseCreativePlan(getOpenAIOutputText(response), input.durationSeconds) };
   }
 }
+
+export class GroqCreativeDirector extends OpenAICreativeDirector {}
 
 export class AnthropicCreativeDirector implements CreativeDirector {
   async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
@@ -137,6 +142,7 @@ export function validateTimeline(plan: CreativePlan, durationSeconds: number) {
 export function getCreativeDirector(): CreativeDirector {
   const provider = process.env.CREATIVE_DIRECTOR || 'mock';
   if (provider === 'openai') return new OpenAICreativeDirector();
+  if (provider === 'groq') return new GroqCreativeDirector();
   if (provider === 'anthropic') return new AnthropicCreativeDirector();
   return new MockCreativeDirector();
 }
