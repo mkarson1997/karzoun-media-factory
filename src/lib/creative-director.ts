@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
+import { createOpenAIResponse, getOpenAIOutputText, selectedOpenAIModel } from './openai-responses';
 
 export const creativePlanSchema = z.object({
   hook: z.string().min(1).max(220),
@@ -39,6 +40,22 @@ export interface CreativeDirector {
   prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult>;
 }
 
+const CREATIVE_SYSTEM = 'You are the creative director for Karzoun Media Factory. Return only valid JSON. Design genuinely original, advertiser-friendly vertical Shorts with a clear viewer payoff. Never imitate an existing channel, copyrighted character, celebrity, logo, franchise style, or creator footage. Do not generate filler or near-duplicate shots. Factual claims must be conservative and verifiable. Kids-only content must remain age-appropriate, non-commercial, non-frightening, and must not encourage dangerous imitation or manipulative engagement.';
+
+function creativePrompt(input: CreativeDirectorInput) {
+  const minShots = Math.max(5, Math.ceil(input.durationSeconds / 6));
+  return `Prepare a production plan for this ${input.durationSeconds}-second 9:16 Short.\nID: ${input.externalPromptId}\nChannel type: ${input.channelType}\nCategory: ${input.category}\nConcept: ${input.concept}\nSource prompt:\n${input.fullPrompt}\n\nReturn exactly this JSON shape: {"hook":"","script":"","title":"max 55 chars","description":"","hashtags":["#..."],"visualStyle":"","audioDirection":"","shots":[{"startSecond":0,"endSecond":5,"visualPrompt":"","camera":"","narration":""}],"safetyNotes":[""]}. Shots must cover the full duration in chronological order with no gaps or overlaps. Use at least ${minShots} materially different visual beats. The first shot must communicate the hook immediately, the middle must escalate rather than repeat, and the final shot must deliver a real payoff and preferably a natural loop. Keep title/description truthful and avoid fake urgency or guaranteed-view language.`;
+}
+
+function parseCreativePlan(text: string, durationSeconds: number) {
+  if (!text) throw new Error('AI creative director returned no creative plan');
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { throw new Error('AI creative director returned invalid JSON'); }
+  const plan = creativePlanSchema.parse(parsed);
+  validateTimeline(plan, durationSeconds);
+  return plan;
+}
+
 export class MockCreativeDirector implements CreativeDirector {
   async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
     const shotCount = Math.max(5, Math.min(12, Math.ceil(input.durationSeconds / 5)));
@@ -60,7 +77,7 @@ export class MockCreativeDirector implements CreativeDirector {
         hook: `What happens if we visualize this: ${input.concept}?`,
         script: `This is a deterministic mock creative plan for ${input.concept}. It exercises pacing, continuity, review, scheduling and safety gates without calling an AI model or spending provider credits.`,
         title: input.concept.slice(0, 55),
-        description: 'Mock-mode production plan. Claude replaces this only after the creative director is explicitly enabled.',
+        description: 'Mock-mode production plan. A live AI creative director replaces this only after it is explicitly enabled.',
         hashtags: ['#Shorts', '#Original', '#KarzounMediaLab'],
         visualStyle: 'Original cinematic vertical short, clean high-contrast composition, varied shot scale, no copyrighted characters or logos.',
         audioDirection: 'Original or licensed audio only. Clear narration when present and restrained sound design.',
@@ -73,31 +90,37 @@ export class MockCreativeDirector implements CreativeDirector {
   }
 }
 
+export class OpenAICreativeDirector implements CreativeDirector {
+  async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
+    if (!process.env.OPENAI_API_KEY) throw new Error('OpenAI creative director is enabled but OPENAI_API_KEY is missing');
+    const model = selectedOpenAIModel();
+    const response = await createOpenAIResponse({
+      model,
+      reasoning: { effort: process.env.OPENAI_REASONING_EFFORT || 'low' },
+      max_output_tokens: 3500,
+      instructions: CREATIVE_SYSTEM,
+      input: creativePrompt(input),
+      text: { verbosity: 'low' }
+    });
+    return { model, plan: parseCreativePlan(getOpenAIOutputText(response), input.durationSeconds) };
+  }
+}
+
 export class AnthropicCreativeDirector implements CreativeDirector {
   async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
     const model = process.env.ANTHROPIC_MODEL;
     if (!process.env.ANTHROPIC_API_KEY || !model) throw new Error('Claude creative director is enabled but its environment configuration is incomplete');
 
     const client = new Anthropic();
-    const minShots = Math.max(5, Math.ceil(input.durationSeconds / 6));
     const message = await client.messages.create({
       model,
       max_tokens: 3000,
-      system: 'You are the creative director for Karzoun Media Factory. Return only valid JSON. Design genuinely original, advertiser-friendly vertical Shorts with a clear viewer payoff. Never imitate an existing channel, copyrighted character, celebrity, logo, franchise style, or creator footage. Do not generate filler or near-duplicate shots. Factual claims must be conservative and verifiable. Kids-only content must remain age-appropriate, non-commercial, non-frightening, and must not encourage dangerous imitation or manipulative engagement.',
-      messages: [{
-        role: 'user',
-        content: `Prepare a production plan for this ${input.durationSeconds}-second 9:16 Short.\nID: ${input.externalPromptId}\nChannel type: ${input.channelType}\nCategory: ${input.category}\nConcept: ${input.concept}\nSource prompt:\n${input.fullPrompt}\n\nReturn exactly this JSON shape: {"hook":"","script":"","title":"max 55 chars","description":"","hashtags":["#..."],"visualStyle":"","audioDirection":"","shots":[{"startSecond":0,"endSecond":5,"visualPrompt":"","camera":"","narration":""}],"safetyNotes":[""]}. Shots must cover the full duration in chronological order with no gaps or overlaps. Use at least ${minShots} materially different visual beats. The first shot must communicate the hook immediately, the middle must escalate rather than repeat, and the final shot must deliver a real payoff and preferably a natural loop. Keep title/description truthful and avoid fake urgency or guaranteed-view language.`
-      }]
+      system: CREATIVE_SYSTEM,
+      messages: [{ role: 'user', content: creativePrompt(input) }]
     });
 
     const text = message.content.filter((item) => item.type === 'text').map((item) => item.text).join('\n').trim();
-    if (!text) throw new Error('Claude returned no creative plan');
-
-    let parsed: unknown;
-    try { parsed = JSON.parse(text); } catch { throw new Error('Claude returned invalid JSON'); }
-    const plan = creativePlanSchema.parse(parsed);
-    validateTimeline(plan, input.durationSeconds);
-    return { model, plan };
+    return { model, plan: parseCreativePlan(text, input.durationSeconds) };
   }
 }
 
@@ -112,5 +135,8 @@ export function validateTimeline(plan: CreativePlan, durationSeconds: number) {
 }
 
 export function getCreativeDirector(): CreativeDirector {
-  return process.env.CREATIVE_DIRECTOR === 'anthropic' ? new AnthropicCreativeDirector() : new MockCreativeDirector();
+  const provider = process.env.CREATIVE_DIRECTOR || 'mock';
+  if (provider === 'openai') return new OpenAICreativeDirector();
+  if (provider === 'anthropic') return new AnthropicCreativeDirector();
+  return new MockCreativeDirector();
 }
