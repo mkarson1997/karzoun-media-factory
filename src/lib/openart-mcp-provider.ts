@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { VideoGenerationProvider, VideoGenerationRequest, VideoGenerationResult } from './providers';
 import { getOpenArtAccessToken } from './openart-oauth';
 import { createOpenAIResponse, selectedOpenAIModel } from './openai-responses';
+import { openSafeRemoteMedia } from './remote-media';
 
 const DEFAULT_OPENART_MCP_URL = 'https://mcp.openart.ai/mcp';
 const MEDIA_URL_RE = /https:\/\/[^\s"'<>]+/g;
@@ -43,10 +44,29 @@ function collectUrls(value: unknown, found = new Set<string>()): string[] {
   return [...found];
 }
 
-function chooseVideoUrl(urls: string[]) {
-  const direct = urls.find((url) => /\.(mp4|webm|mov)(?:\?|$)/i.test(url));
+function chooseVideoUrl(urls: string[], mcpServerUrl: string) {
+  const server = mcpServerUrl.replace(/\/$/, '');
+  const candidates = urls.filter((url) => {
+    const normalized = url.replace(/\/$/, '');
+    if (normalized === server) return false;
+    try {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/mcp' || parsed.pathname.endsWith('/mcp')) return false;
+    } catch {
+      return false;
+    }
+    return true;
+  });
+
+  const direct = candidates.find((url) => /\.(mp4|webm|mov)(?:\?|$)/i.test(url));
   if (direct) return direct;
-  return urls.find((url) => /(openart|cdn|media|video|output|asset)/i.test(url));
+  return candidates.find((url) => /(cdn|media|video|output|asset|download|generation)/i.test(url));
+}
+
+async function verifyPlayableVideoUrl(rawUrl: string) {
+  const media = await openSafeRemoteMedia(rawUrl);
+  media.stream.destroy();
+  return media.finalUrl;
 }
 
 function renderPrompt(input: VideoGenerationRequest, modelHint: string) {
@@ -117,8 +137,16 @@ export class OpenArtMcpVideoProvider implements VideoGenerationProvider {
       ? await generateViaAnthropic(input, token, url, modelHint)
       : await generateViaOpenAICompatible(input, token, url, modelHint);
 
-    const videoUrl = chooseVideoUrl(collectUrls(result.payload));
-    if (!videoUrl) throw new Error(`OpenArt MCP via ${aiProvider} completed without a usable video asset URL`);
+    const candidateUrl = chooseVideoUrl(collectUrls(result.payload), url);
+    if (!candidateUrl) throw new Error(`OpenArt MCP via ${aiProvider} completed without a usable video asset URL`);
+
+    let videoUrl: string;
+    try {
+      videoUrl = await verifyPlayableVideoUrl(candidateUrl);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'unknown media validation error';
+      throw new Error(`OpenArt MCP returned a non-playable media URL: ${reason}`);
+    }
 
     return { providerJobId: result.id, status: 'READY_FOR_REVIEW', videoUrl };
   }
