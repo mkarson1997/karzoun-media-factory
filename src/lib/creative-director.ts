@@ -44,7 +44,7 @@ const CREATIVE_SYSTEM = 'You are the creative director for Karzoun Media Factory
 
 function creativePrompt(input: CreativeDirectorInput) {
   const minShots = Math.max(5, Math.ceil(input.durationSeconds / 6));
-  return `Prepare a production plan for this ${input.durationSeconds}-second 9:16 Short.\nID: ${input.externalPromptId}\nChannel type: ${input.channelType}\nCategory: ${input.category}\nConcept: ${input.concept}\nSource prompt:\n${input.fullPrompt}\n\nReturn exactly this JSON shape: {"hook":"","script":"","title":"max 55 chars","description":"","hashtags":["#..."],"visualStyle":"","audioDirection":"","shots":[{"startSecond":0,"endSecond":5,"visualPrompt":"","camera":"","narration":""}],"safetyNotes":[""]}. Shots must cover the full duration in chronological order with no gaps or overlaps. Use at least ${minShots} materially different visual beats. The first shot must communicate the hook immediately, the middle must escalate rather than repeat, and the final shot must deliver a real payoff and preferably a natural loop. Keep title/description truthful and avoid fake urgency or guaranteed-view language.`;
+  return `Prepare a production plan for this ${input.durationSeconds}-second 9:16 Short.\nID: ${input.externalPromptId}\nChannel type: ${input.channelType}\nCategory: ${input.category}\nConcept: ${input.concept}\nSource prompt:\n${input.fullPrompt}\n\nReturn exactly this JSON shape: {"hook":"","script":"","title":"max 55 chars","description":"","hashtags":["#..."],"visualStyle":"","audioDirection":"","shots":[{"startSecond":0,"endSecond":5,"visualPrompt":"","camera":"","narration":""}],"safetyNotes":[""]}. Shots must cover the full duration in chronological order with no gaps or overlaps. Use at least ${minShots} materially different visual beats. Keep every field concise so the complete JSON fits comfortably in a small token budget. The first shot must communicate the hook immediately, the middle must escalate rather than repeat, and the final shot must deliver a real payoff and preferably a natural loop. Keep title/description truthful and avoid fake urgency or guaranteed-view language.`;
 }
 
 export function normalizeCreativeTitle(value: unknown) {
@@ -116,7 +116,7 @@ export class OpenAICreativeDirector implements CreativeDirector {
     const response = await createOpenAIResponse({
       model,
       reasoning: { effort: process.env.OPENAI_REASONING_EFFORT || 'low' },
-      max_output_tokens: 3500,
+      max_output_tokens: selectedResponsesProvider() === 'groq' ? 1800 : 3500,
       instructions: CREATIVE_SYSTEM,
       input: creativePrompt(input),
       text: { verbosity: 'low' }
