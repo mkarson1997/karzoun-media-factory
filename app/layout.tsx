@@ -8,9 +8,12 @@ export const metadata = {
 
 const nav = [
   ['Dashboard', '/dashboard'],
+  ['Prompts', '/prompts'],
   ['Queue', '/queue'],
   ['Review', '/review'],
+  ['Schedule', '/schedule'],
   ['Analytics', '/analytics'],
+  ['Setup', '/setup'],
   ['Settings', '/settings']
 ] as const;
 
@@ -37,7 +40,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <a className="status-dot" href="/setup" title="Open activation wizard">{runtimeLabel()}</a>
           </header>
           <main>{children}</main>
-          <nav className="bottom-nav" aria-label="Primary">
+          <nav className="bottom-nav" aria-label="Primary factory navigation">
             {nav.map(([label, href]) => (
               <a key={href} href={href}>{label}</a>
             ))}
