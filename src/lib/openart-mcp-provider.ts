@@ -57,23 +57,39 @@ const RENDER_SYSTEM = 'You are the rendering operator for Karzoun Media Factory.
 
 async function generateViaOpenAICompatible(input: VideoGenerationRequest, token: string, url: string, modelHint: string) {
   const model = selectedOpenAIModel();
-  const response = await createOpenAIResponse({
+  const groq = selectedAiProvider() === 'groq';
+  const mcpTool = groq
+    ? {
+        type: 'mcp',
+        server_label: 'openart',
+        server_description: 'OpenArt image and video generation tools. Use this server to generate the requested finished vertical video and return the completed media asset.',
+        server_url: url,
+        headers: { Authorization: `Bearer ${token}` },
+        require_approval: 'never'
+      }
+    : {
+        type: 'mcp',
+        server_label: 'openart',
+        server_url: url,
+        authorization: token,
+        require_approval: 'never'
+      };
+
+  const payload: Record<string, unknown> = {
     model,
     reasoning: { effort: process.env.OPENAI_REASONING_EFFORT || 'low' },
     max_output_tokens: 2200,
     instructions: RENDER_SYSTEM,
     input: renderPrompt(input, modelHint),
-    tools: [{
-      type: 'mcp',
-      server_label: 'openart',
-      server_url: url,
-      authorization: token,
-      require_approval: 'never'
-    }],
-    tool_choice: 'required',
-    text: { verbosity: 'low' }
-  });
-  const prefix = selectedAiProvider() === 'groq' ? 'groq' : 'openai';
+    tools: [mcpTool]
+  };
+  if (!groq) {
+    payload.tool_choice = 'required';
+    payload.text = { verbosity: 'low' };
+  }
+
+  const response = await createOpenAIResponse(payload);
+  const prefix = groq ? 'groq' : 'openai';
   return { id: typeof response.id === 'string' ? response.id : `${prefix}-${input.jobId}`, payload: response };
 }
 
