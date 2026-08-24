@@ -10,6 +10,16 @@ function safeNextPath(value: string) {
   return value.startsWith('/') && !value.startsWith('//') && !value.includes('\\') ? value : '/dashboard';
 }
 
+function secureSessionCookie() {
+  try { return new URL(process.env.APP_BASE_URL || '').protocol === 'https:'; }
+  catch { return process.env.NODE_ENV === 'production'; }
+}
+
+function externalBaseUrl(request: NextRequest) {
+  try { return new URL(process.env.APP_BASE_URL || request.url); }
+  catch { return new URL(request.url); }
+}
+
 export async function POST(request: NextRequest) {
   const configured = process.env.APP_SECRET;
   if (!configured) return new NextResponse('APP_SECRET is not configured.', { status: 503 });
@@ -31,17 +41,17 @@ export async function POST(request: NextRequest) {
   const valid = left.length === right.length && timingSafeEqual(left, right);
 
   if (!valid) {
-    const target = new URL('/login', request.url);
+    const target = new URL('/login', externalBaseUrl(request));
     target.searchParams.set('error', '1');
     target.searchParams.set('next', nextPath);
     return NextResponse.redirect(target, 303);
   }
 
-  const response = NextResponse.redirect(new URL(nextPath, request.url), 303);
+  const response = NextResponse.redirect(new URL(nextPath, externalBaseUrl(request)), 303);
   response.headers.set('cache-control', 'no-store');
   response.cookies.set('kmf_session', hash(`kmf:${configured}`), {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: secureSessionCookie(),
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 24 * 30

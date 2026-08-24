@@ -1,4 +1,5 @@
 import type { JobStatus } from './job-state-machine';
+import { assertPaidGenerationAllowed, effectiveVideoProvider } from './zero-cost';
 
 export interface VideoGenerationRequest {
   jobId: string;
@@ -69,6 +70,12 @@ export class MockVideoProvider implements VideoGenerationProvider {
 }
 
 export async function getVideoGenerationProvider(name = process.env.VIDEO_PROVIDER || 'mock'): Promise<VideoGenerationProvider> {
+  name = effectiveVideoProvider(name);
+  assertPaidGenerationAllowed(name);
+  if (name === 'local-demo' || name === 'local-ffmpeg') {
+    const { LocalDemoVideoProvider } = await import('./local-demo-provider');
+    return new LocalDemoVideoProvider();
+  }
   if (name === 'mock' || name === 'mock-demo') return new MockVideoProvider();
   if (name === 'openart-mcp') {
     const { OpenArtMcpVideoProvider } = await import('./openart-mcp-provider');

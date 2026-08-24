@@ -1,5 +1,6 @@
 import { ChannelType, JobOrigin, JobStatus, type Prisma } from '@prisma/client';
 import { prisma } from './prisma';
+import { effectiveVideoProvider } from './zero-cost';
 
 type Candidate = {
   id: string;
@@ -81,7 +82,7 @@ export function rankAutopilotCandidates(
 }
 
 function generationSafetyBlock() {
-  const provider = process.env.VIDEO_PROVIDER || 'mock';
+  const provider = effectiveVideoProvider();
   const isMock = provider === 'mock' || provider === 'mock-demo';
   if (isMock) return null;
   if (process.env.ALLOW_PAID_GENERATION !== 'true') {
@@ -230,7 +231,7 @@ export async function runAutopilotTick(): Promise<AutopilotTickResult> {
           channelId: channel.id,
           status: JobStatus.QUEUED,
           origin: JobOrigin.AUTOPILOT,
-          provider: process.env.VIDEO_PROVIDER || 'mock',
+          provider: effectiveVideoProvider(),
           requestedDuration: selected.targetDurationSeconds
         }
       });

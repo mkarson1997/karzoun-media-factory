@@ -156,7 +156,7 @@ export async function notifyJobFailureOnce(input: { jobId: string; externalPromp
   if (!token || !allowedUserId) return false;
   const reason = input.reason.replace(/(?:sk-|gsk_|Bearer\s+)[A-Za-z0-9._-]+/gi, '[redacted]').slice(0, 300);
   const bot = new Telegraf(token);
-  await bot.telegram.sendMessage(allowedUserId, `⚠️ Generation failed\n\n${input.externalPromptId}\n${reason}\n\nUse /queue to inspect it. Retry only once after checking whether OpenArt already created an asset.`, { link_preview_options: { is_disabled: true } });
+  await bot.telegram.sendMessage(allowedUserId, `⚠️ Generation failed\n\n${input.externalPromptId}\n${reason}\n\nUse /queue to inspect it. Retry only once after checking the provider state.`, { link_preview_options: { is_disabled: true } });
   await markNotified(input.jobId, action, { generationAttempt: input.generationAttempt, reason });
   return true;
 }

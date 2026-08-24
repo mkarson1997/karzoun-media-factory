@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { MockPublishingProvider, MockVideoProvider } from './providers';
+import { afterEach, describe, expect, it } from 'vitest';
+import { getVideoGenerationProvider, MockPublishingProvider, MockVideoProvider } from './providers';
 
 describe('mock providers', () => {
+  afterEach(() => { delete process.env.ZERO_COST_MODE; delete process.env.VIDEO_PROVIDER; });
   it('simulates generation without making a paid call', async () => {
     const provider = new MockVideoProvider();
     const started = await provider.generateVideo({ jobId: 'job-1', prompt: 'original test prompt', durationSeconds: 35 });
@@ -25,5 +26,12 @@ describe('mock providers', () => {
     });
     expect(result.status).toBe('PUBLISHED');
     expect(result.externalVideoId).toBe('mock-youtube-job-2');
+  });
+
+  it('hard-overrides paid providers with local FFmpeg in zero-cost mode', async () => {
+    process.env.ZERO_COST_MODE = 'true';
+    process.env.VIDEO_PROVIDER = 'openart-mcp';
+    const provider = await getVideoGenerationProvider();
+    expect(provider.constructor.name).toBe('LocalDemoVideoProvider');
   });
 });

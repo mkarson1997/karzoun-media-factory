@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { createOpenAIResponse, getOpenAIOutputText, responsesProviderConfigured, selectedOpenAIModel } from './openai-responses';
+import { assertExternalCreativeAllowed, zeroCostMode } from './zero-cost';
 
 export const creativePlanSchema = z.object({
   hook: z.string().min(1).max(220),
@@ -117,6 +118,7 @@ export class OpenAICreativeDirector implements CreativeDirector {
   constructor(private readonly responsesProvider: 'openai' | 'groq' = 'openai') {}
 
   async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
+    assertExternalCreativeAllowed(this.responsesProvider);
     if (!responsesProviderConfigured(process.env, this.responsesProvider)) {
       const provider = this.responsesProvider;
       throw new Error(`${provider === 'groq' ? 'Groq' : 'OpenAI'} creative director credentials are missing`);
@@ -140,6 +142,7 @@ export class GroqCreativeDirector extends OpenAICreativeDirector {
 
 export class AnthropicCreativeDirector implements CreativeDirector {
   async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
+    assertExternalCreativeAllowed('anthropic');
     const model = process.env.ANTHROPIC_MODEL;
     if (!process.env.ANTHROPIC_API_KEY || !model) throw new Error('Claude creative director is enabled but its environment configuration is incomplete');
 
@@ -153,6 +156,65 @@ export class AnthropicCreativeDirector implements CreativeDirector {
 
     const text = message.content.filter((item) => item.type === 'text').map((item) => item.text).join('\n').trim();
     return { model, plan: parseCreativePlan(text, input.durationSeconds) };
+  }
+}
+
+type FetchLike = typeof fetch;
+
+export type OllamaModelInfo = { name?: string; model?: string; remote_model?: string; size?: number };
+
+export function isLocalOllamaModel(model: OllamaModelInfo) {
+  const name = model.name || model.model || '';
+  return Boolean(name && !model.remote_model && !name.endsWith(':cloud') && !/embed/i.test(name) && (model.size ?? 0) > 1_000_000);
+}
+
+function ollamaBaseUrl() {
+  return (process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434').replace(/\/$/, '');
+}
+
+export class OllamaCreativeDirector implements CreativeDirector {
+  constructor(private readonly request: FetchLike = fetch) {}
+
+  private async selectModel() {
+    const response = await this.request(`${ollamaBaseUrl()}/api/tags`, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`Ollama model discovery returned HTTP ${response.status}`);
+    const payload = await response.json() as { models?: OllamaModelInfo[] };
+    const localModels = payload.models?.filter(isLocalOllamaModel) ?? [];
+    const configured = process.env.OLLAMA_MODEL?.trim();
+    if (configured) {
+      const match = localModels.find((item) => (item.name || item.model) === configured);
+      if (!match) throw new Error(`Configured Ollama model ${configured} is not a local, non-embedding model`);
+      return configured;
+    }
+    const model = localModels.map((item) => item.name || item.model).find(Boolean);
+    if (!model) throw new Error('Ollama is running but no local generation model is installed');
+    return model;
+  }
+
+  async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
+    const model = await this.selectModel();
+    const response = await this.request(`${ollamaBaseUrl()}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, system: CREATIVE_SYSTEM, prompt: creativePrompt(input), stream: false, format: 'json', options: { temperature: 0.2 } }),
+      signal: AbortSignal.timeout(Number(process.env.OLLAMA_TIMEOUT_MS || 30000))
+    });
+    if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
+    const payload = await response.json() as { response?: string };
+    return { model: `ollama/${model}`, plan: parseCreativePlan(payload.response || '', input.durationSeconds) };
+  }
+}
+
+export class ZeroCostCreativeDirector implements CreativeDirector {
+  constructor(private readonly ollama: CreativeDirector = new OllamaCreativeDirector()) {}
+
+  async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
+    try {
+      return await this.ollama.prepare(input);
+    } catch (error) {
+      console.warn(`Local Ollama unavailable; using deterministic fallback: ${conciseError(error)}`);
+      return new DeterministicCreativeDirector().prepare(input);
+    }
   }
 }
 
@@ -197,6 +259,7 @@ export function validateTimeline(plan: CreativePlan, durationSeconds: number) {
 }
 
 export function getCreativeDirector(): CreativeDirector {
+  if (zeroCostMode()) return new ZeroCostCreativeDirector();
   const provider = process.env.CREATIVE_DIRECTOR || 'mock';
   if (remoteDirector(provider)) return new ResilientCreativeDirector(provider, process.env.CREATIVE_DIRECTOR_FALLBACK);
   return new MockCreativeDirector();

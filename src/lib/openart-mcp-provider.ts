@@ -1,5 +1,6 @@
 import type { Tool } from '@modelcontextprotocol/client';
 import type { VideoGenerationProvider, VideoGenerationRequest, VideoGenerationResult } from './providers';
+import { assertPaidGenerationAllowed } from './zero-cost';
 import { DEFAULT_OPENART_MCP_URL, OpenArtMcpClient, type OpenArtToolResult } from './openart-mcp-client';
 import { hasDurableOpenArtOAuthCredential } from './openart-oauth';
 import { openSafeRemoteMedia } from './remote-media';
@@ -281,7 +282,7 @@ async function completedResult(providerJobId: string, facts: OpenArtResultFacts,
 
 export class OpenArtMcpVideoProvider implements VideoGenerationProvider {
   async generateVideo(input: VideoGenerationRequest): Promise<VideoGenerationResult> {
-    if (process.env.ALLOW_PAID_GENERATION !== 'true') throw new Error('Paid generation is locked');
+    assertPaidGenerationAllowed('openart-mcp');
     const mcpClient = client();
     const selection = await selectOpenArtVideoModel({ prompt: input.prompt, requestedDuration: input.durationSeconds, hint: process.env.VIDEO_MODEL_HINT, mcpClient });
     console.info(`[JOB ${input.externalJobId || input.jobId}] OpenArt model selected: ${selection.model.id} (${selection.mode}, ${selection.actualDuration}s)`);

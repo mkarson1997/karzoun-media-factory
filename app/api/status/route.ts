@@ -6,8 +6,8 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const [counters, activity] = await Promise.all([getFactoryCounters(), recentActivity(8)]);
-    return NextResponse.json({ ok: true, counters, activity, mode: process.env.VIDEO_PROVIDER || 'mock' });
+    return NextResponse.json({ ok: true, counters, activity, mode: process.env.VIDEO_PROVIDER || 'mock', zeroCostMode: process.env.ZERO_COST_MODE === 'true' });
   } catch {
-    return NextResponse.json({ ok: false, counters: null, activity: [], mode: process.env.VIDEO_PROVIDER || 'mock' }, { status: 503 });
+    return NextResponse.json({ ok: false, counters: null, activity: [], mode: process.env.VIDEO_PROVIDER || 'mock', zeroCostMode: process.env.ZERO_COST_MODE === 'true' }, { status: 503 });
   }
 }

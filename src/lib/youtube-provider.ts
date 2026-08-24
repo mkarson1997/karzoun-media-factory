@@ -2,6 +2,7 @@ import { google, type youtube_v3 } from 'googleapis';
 import type { PublishingProvider, PublishingRequest, PublishingResult } from './providers';
 import { assertRuntimePublishingCapacity } from './publishing-guard';
 import { openSafeRemoteMedia } from './remote-media';
+import { openLocalMedia } from './local-media';
 import { getAuthorizedYouTubeClient } from './youtube-auth';
 import { prisma } from './prisma';
 
@@ -42,7 +43,9 @@ async function channelClient(factoryChannelId?: string) {
 }
 
 async function insertVideo(youtube: youtube_v3.Youtube, input: PublishingRequest, visibility: 'PRIVATE' | 'UNLISTED' | 'PUBLIC', publishAt?: Date) {
-  const media = await openSafeRemoteMedia(input.videoUrl);
+  const media = input.videoUrl.startsWith('/api/media/')
+    ? await openLocalMedia(input.videoUrl)
+    : await openSafeRemoteMedia(input.videoUrl);
   return youtube.videos.insert({
     part: ['snippet', 'status'],
     requestBody: {

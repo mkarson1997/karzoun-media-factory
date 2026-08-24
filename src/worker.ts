@@ -11,6 +11,7 @@ import { createTelegramBot, notifyOperator } from './lib/telegram';
 import { notifyJobFailureOnce, notifyReviewReady, sweepReadyReviewNotifications } from './lib/telegram-review';
 import { syncPublishedAnalytics } from './lib/youtube-analytics';
 import { generationWorkDecision } from './lib/generation-recovery';
+import { effectiveVideoProvider, zeroCostMode } from './lib/zero-cost';
 
 let stopping = false;
 let lastAnalyticsSyncAt = 0;
@@ -19,8 +20,9 @@ let lastHeartbeatAt = 0;
 
 function autopilotExecutionBlocked(job: { origin: string; provider: string }) {
   const isAutopilot = job.origin === 'AUTOPILOT';
-  const isMock = job.provider === 'mock' || job.provider === 'mock-demo';
-  if (!isAutopilot || isMock) return false;
+  const provider = effectiveVideoProvider(job.provider);
+  const isFree = provider === 'mock' || provider === 'mock-demo' || provider === 'local-demo' || provider === 'local-ffmpeg';
+  if (!isAutopilot || isFree) return false;
   return process.env.ALLOW_PAID_GENERATION !== 'true' || process.env.ALLOW_AUTOPILOT_PAID_GENERATION !== 'true';
 }
 
@@ -189,10 +191,11 @@ async function startOneGeneration() {
   if (!claimed) return true;
 
   try {
+    const providerName = effectiveVideoProvider(queued.provider);
     const attempt = queued.generationAttempt + 1;
-    await prisma.productionJob.update({ where: { id: queued.id }, data: { generationAttempt: attempt, providerStatus: 'PREPARING', startedAt: new Date(), lastPolledAt: null, nextPollAt: null, completedAt: null, failureReason: null } });
+    await prisma.productionJob.update({ where: { id: queued.id }, data: { provider: providerName, generationAttempt: attempt, providerStatus: 'PREPARING', startedAt: new Date(), lastPolledAt: null, nextPollAt: null, completedAt: null, failureReason: null } });
     const creativePlan = await prepareCreativePlan(queued);
-    const provider = await getVideoGenerationProvider(queued.provider);
+    const provider = await getVideoGenerationProvider(providerName);
     await prisma.productionJob.update({ where: { id: queued.id }, data: { providerStatus: 'SUBMITTING' } });
     console.info(`[JOB ${queued.prompt.externalPromptId}] submitting generation`);
     const result = await provider.generateVideo({
@@ -204,7 +207,7 @@ async function startOneGeneration() {
 
     await prisma.productionJob.update({ where: { id: queued.id }, data: {
       providerJobId: result.providerJobId,
-      creationId: queued.provider === 'openart-mcp' ? result.providerJobId : null,
+      creationId: providerName === 'openart-mcp' ? result.providerJobId : null,
       providerStatus: result.providerStatus || result.status,
       providerMetadata: result.providerMetadata as Prisma.InputJsonValue | undefined,
       videoUrl: result.videoUrl,
@@ -213,11 +216,11 @@ async function startOneGeneration() {
       lastPolledAt: new Date(),
       nextPollAt: result.status === 'GENERATING' ? nextPollDate(result.nextPollSeconds) : null
     } });
-    console.info(`[JOB ${queued.prompt.externalPromptId}] OpenArt creation: ${result.providerJobId}`);
+    console.info(`[JOB ${queued.prompt.externalPromptId}] ${providerName === 'openart-mcp' ? 'OpenArt creation' : 'provider job'}: ${result.providerJobId}`);
     console.info(`[JOB ${queued.prompt.externalPromptId}] status: ${(result.providerStatus || result.status).toLowerCase()}`);
 
     if (result.status === 'READY_FOR_REVIEW') {
-      if (!result.videoUrl && queued.provider !== 'mock' && queued.provider !== 'mock-demo') throw new Error('Provider completed without an accessible video URL');
+      if (!result.videoUrl && providerName !== 'mock' && providerName !== 'mock-demo') throw new Error('Provider completed without an accessible video URL');
       await prisma.productionJob.update({ where: { id: queued.id }, data: { completedAt: new Date() } });
       const ready = await claimJobTransition(queued.id, 'GENERATING', 'READY_FOR_REVIEW', 'worker');
       if (ready) {
@@ -228,7 +231,7 @@ async function startOneGeneration() {
           externalPromptId: queued.prompt.externalPromptId,
           concept: queued.prompt.concept,
           durationSeconds: queued.requestedDuration,
-          provider: queued.provider,
+          provider: providerName,
           origin: queued.origin,
           creationId: result.providerJobId,
           providerStatus: result.providerStatus || result.status,
@@ -240,7 +243,7 @@ async function startOneGeneration() {
   } catch (error) {
     const reason = errorMessage(error, 'Creative planning or generation failed');
     const current = await prisma.productionJob.findUnique({ where: { id: queued.id }, select: { providerStatus: true, generationAttempt: true } });
-    const uncertain = current?.providerStatus === 'SUBMITTING' && queued.provider === 'openart-mcp';
+    const uncertain = current?.providerStatus === 'SUBMITTING' && effectiveVideoProvider(queued.provider) === 'openart-mcp';
     await failGeneration({ ...queued, generationAttempt: current?.generationAttempt || queued.generationAttempt + 1 }, reason, uncertain ? 'SUBMISSION_UNCERTAIN' : 'FAILED');
     return true;
   }
@@ -359,7 +362,7 @@ async function maybeSyncAnalytics() {
 async function processCycle() {
   if (Date.now() - lastHeartbeatAt >= 30_000) {
     lastHeartbeatAt = Date.now();
-    await prisma.activityLog.create({ data: { actor: 'worker', action: 'WORKER_HEARTBEAT', entityType: 'Worker', entityId: 'generation-worker', metadata: { videoProvider: process.env.VIDEO_PROVIDER || 'mock', publishingProvider: process.env.PUBLISHING_PROVIDER || 'mock' } } });
+    await prisma.activityLog.create({ data: { actor: 'worker', action: 'WORKER_HEARTBEAT', entityType: 'Worker', entityId: 'generation-worker', metadata: { videoProvider: effectiveVideoProvider(), zeroCostMode: zeroCostMode(), publishingProvider: process.env.PUBLISHING_PROVIDER || 'mock' } } });
     await prisma.activityLog.deleteMany({ where: { action: 'WORKER_HEARTBEAT', createdAt: { lt: new Date(Date.now() - 24 * 60 * 60_000) } } }).catch(() => undefined);
   }
   const settings = await prisma.appSettings.findUnique({ where: { id: 'singleton' } });
@@ -382,7 +385,7 @@ async function main() {
   }
   await prisma.$queryRaw`SELECT 1`;
 
-  if ((process.env.VIDEO_PROVIDER || 'mock') === 'openart-mcp') {
+  if (!zeroCostMode() && (process.env.VIDEO_PROVIDER || 'mock') === 'openart-mcp') {
     const token = await getOpenArtAccessToken();
     if (!token) throw new Error('Worker startup blocked: OpenArt OAuth could not resolve an access token from the durable credential store or .env fallback');
     console.log('OpenArt OAuth ready. Direct MCP rendering is enabled; no LLM orchestration is used.');
@@ -400,7 +403,7 @@ async function main() {
     console.log('Telegram disabled until TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USER_ID are configured.');
   }
 
-  console.log(`Karzoun Media Factory worker started. Video provider: ${process.env.VIDEO_PROVIDER || 'mock'}. Publishing provider: ${process.env.PUBLISHING_PROVIDER || 'mock'}.`);
+  console.log(`Karzoun Media Factory worker started. Video provider: ${effectiveVideoProvider()}. Publishing provider: ${process.env.PUBLISHING_PROVIDER || 'mock'}.${zeroCostMode() ? ' ZERO-COST TEST MODE: external AI and paid generation are blocked.' : ''}`);
   while (!stopping) {
     try {
       await processCycle();

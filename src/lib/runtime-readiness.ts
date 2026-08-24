@@ -30,15 +30,22 @@ function aiProviderConfigured(env: NodeJS.ProcessEnv, provider: string) {
 export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): ReadinessCheck[] {
   const production = env.NODE_ENV === 'production';
   const videoProvider = env.VIDEO_PROVIDER || 'mock';
+  const zeroCost = env.ZERO_COST_MODE === 'true';
   const publishingProvider = env.PUBLISHING_PROVIDER || 'mock';
   const creativeDirector = env.CREATIVE_DIRECTOR || 'mock';
-  const paid = env.ALLOW_PAID_GENERATION === 'true';
-  const autopilotPaid = env.ALLOW_AUTOPILOT_PAID_GENERATION === 'true';
+  const paid = !zeroCost && env.ALLOW_PAID_GENERATION === 'true';
+  const autopilotPaid = !zeroCost && env.ALLOW_AUTOPILOT_PAID_GENERATION === 'true';
   const uploads = env.ALLOW_YOUTUBE_UPLOAD === 'true';
   const publicPublishing = env.ALLOW_PUBLIC_PUBLISHING === 'true';
   const appSecretLength = env.APP_SECRET?.length ?? 0;
 
   const checks: ReadinessCheck[] = [
+    {
+      name: 'Zero-cost mode',
+      ok: !zeroCost || videoProvider === 'local-demo' || videoProvider === 'local-ffmpeg',
+      severity: 'required',
+      detail: zeroCost ? 'ACTIVE: external AI and paid generation are runtime-blocked' : 'inactive'
+    },
     {
       name: 'DATABASE_URL',
       ok: configured(env.DATABASE_URL),
@@ -61,7 +68,9 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
     }
   ];
 
-  if (creativeDirector === 'openai' || creativeDirector === 'groq' || creativeDirector === 'anthropic') {
+  if (zeroCost) {
+    checks.push({ name: 'AI creative director', ok: true, severity: 'warning', detail: 'local Ollama preferred; deterministic no-network fallback available' });
+  } else if (creativeDirector === 'openai' || creativeDirector === 'groq' || creativeDirector === 'anthropic') {
     const remoteReady = aiProviderConfigured(env, creativeDirector);
     checks.push({
       name: 'AI creative director',
@@ -71,7 +80,15 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
     });
   }
 
-  if (videoProvider === 'openart-mcp') {
+  if (zeroCost) {
+    checks.push({
+      name: 'Video provider',
+      ok: videoProvider === 'local-demo' || videoProvider === 'local-ffmpeg',
+      severity: 'required',
+      detail: `provider=${videoProvider}; local FFmpeg; cost $0; OpenArt disabled`
+    });
+    checks.push({ name: 'Paid generation lock', ok: true, severity: 'warning', detail: 'HARD LOCKED by ZERO_COST_MODE' });
+  } else if (videoProvider === 'openart-mcp') {
     checks.push({
       name: 'OpenArt MCP configuration',
       ok: safeBaseUrl(env.OPENART_MCP_URL || 'https://mcp.openart.ai/mcp'),
@@ -87,7 +104,7 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
   } else {
     checks.push({
       name: 'Video provider',
-      ok: videoProvider === 'mock' || videoProvider === 'mock-demo',
+      ok: videoProvider === 'mock' || videoProvider === 'mock-demo' || videoProvider === 'local-demo' || videoProvider === 'local-ffmpeg',
       severity: 'required',
       detail: `provider=${videoProvider}`
     });
@@ -97,7 +114,7 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
     name: 'Autopilot paid generation interlock',
     ok: !autopilotPaid || (paid && videoProvider !== 'mock' && videoProvider !== 'mock-demo'),
     severity: 'required',
-    detail: autopilotPaid ? 'automatic paid generation explicitly unlocked' : 'automatic paid generation locked'
+    detail: zeroCost ? 'automatic paid generation hard-locked by ZERO_COST_MODE' : autopilotPaid ? 'automatic paid generation explicitly unlocked' : 'automatic paid generation locked'
   });
 
   if (publishingProvider === 'youtube') {

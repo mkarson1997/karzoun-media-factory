@@ -92,6 +92,7 @@ export default async function DashboardPage() {
   ] as const;
 
   const generationMode = process.env.VIDEO_PROVIDER || 'mock';
+  const zeroCost = process.env.ZERO_COST_MODE === 'true';
   const publishingMode = process.env.PUBLISHING_PROVIDER || 'mock';
   const workerHealthy = Boolean(workerHeartbeat && Date.now() - workerHeartbeat.getTime() < 90_000);
 
@@ -121,6 +122,11 @@ export default async function DashboardPage() {
           <a className="button secondary" href="/settings">🔧 Settings</a>
         </div>
       </section>
+
+      {zeroCost ? <section className="notice">
+        <strong>ZERO-COST TEST MODE</strong><br />
+        Creative provider: Ollama / deterministic fallback · Video provider: Local FFmpeg · Cost: $0 · OpenArt: disabled · YouTube: PRIVATE only
+      </section> : null}
 
       {!databaseReady ? <div className="notice">Database is not configured yet. Add DATABASE_URL, run database setup, then refresh.</div> : null}
       {settings.productionPaused || settings.publishingPaused ? <div className="notice"><strong>Factory pause is active.</strong> Production: {settings.productionPaused ? 'PAUSED' : 'RUNNING'} · Publishing: {settings.publishingPaused ? 'PAUSED' : 'RUNNING'} · <a href="/settings">Open controls</a></div> : null}
@@ -179,13 +185,15 @@ export default async function DashboardPage() {
         <div className="card">
           <div className="section-title">Connections & interlocks</div>
           <div className="row"><span>Video provider</span><span className="badge">{generationMode.toUpperCase()}</span></div>
-          <div className="row"><span>OpenArt</span><span className="badge">{generationMode === 'openart-mcp' && openArtOAuth ? 'DIRECT MCP READY' : generationMode === 'openart-mcp' ? 'OAUTH NEEDED' : 'NOT SELECTED'}</span></div>
+          <div className="row"><span>OpenArt</span><span className="badge">{zeroCost ? 'DISABLED BY ZERO-COST MODE' : generationMode === 'openart-mcp' && openArtOAuth ? 'DIRECT MCP READY' : generationMode === 'openart-mcp' ? 'OAUTH NEEDED' : 'NOT SELECTED'}</span></div>
+          <div className="row"><span>Creative provider</span><span className="badge">{zeroCost ? 'OLLAMA / DETERMINISTIC' : (process.env.CREATIVE_DIRECTOR || 'mock').toUpperCase()}</span></div>
+          <div className="row"><span>Cost</span><span className="badge">{zeroCost ? '$0' : 'PROVIDER RATE'}</span></div>
           <div className="row"><span>Worker</span><span className="badge">{workerHealthy ? 'HEALTHY' : 'STALE / OFFLINE'}</span></div>
-          <div className="row"><span>Paid generation</span><span className="badge">{process.env.ALLOW_PAID_GENERATION === 'true' ? 'UNLOCKED' : 'LOCKED'}</span></div>
+          <div className="row"><span>Paid generation</span><span className="badge">{zeroCost ? 'HARD LOCKED' : process.env.ALLOW_PAID_GENERATION === 'true' ? 'UNLOCKED' : 'LOCKED'}</span></div>
           <div className="row"><span>YouTube channels</span><span className="badge">{connectedYouTube}/{channels.length} CONNECTED</span></div>
           <div className="row"><span>Publishing provider</span><span className="badge">{publishingMode.toUpperCase()}</span></div>
           <div className="row"><span>YouTube upload</span><span className="badge">{process.env.ALLOW_YOUTUBE_UPLOAD === 'true' ? 'UNLOCKED' : 'LOCKED'}</span></div>
-          <div className="row"><span>Public publishing</span><span className="badge">{process.env.ALLOW_PUBLIC_PUBLISHING === 'true' ? 'UNLOCKED' : 'LOCKED'}</span></div>
+          <div className="row"><span>Public publishing</span><span className="badge">{process.env.ALLOW_PUBLIC_PUBLISHING === 'true' ? 'UNLOCKED' : zeroCost ? 'LOCKED · PRIVATE ONLY' : 'LOCKED'}</span></div>
           <div className="row"><span>Telegram</span><span className="badge">{process.env.TELEGRAM_BOT_TOKEN ? 'CONFIGURED' : 'AWAITING TOKEN'}</span></div>
           <div className="row"><span>Database</span><span className="badge">{databaseReady ? 'READY' : 'NOT READY'}</span></div>
         </div>

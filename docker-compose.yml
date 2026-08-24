@@ -23,6 +23,10 @@ services:
       APP_SECRET: ${APP_SECRET:?Run scripts/prepare-windows.ps1 or set APP_SECRET in .env}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3100}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      ZERO_COST_MODE: ${ZERO_COST_MODE:-false}
+      MEDIA_STORAGE_PATH: /app/media
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-mock}
       PUBLISHING_PROVIDER: ${PUBLISHING_PROVIDER:-mock}
       CREATIVE_DIRECTOR: ${CREATIVE_DIRECTOR:-mock}
@@ -30,12 +34,16 @@ services:
       ALLOW_AUTOPILOT_PAID_GENERATION: ${ALLOW_AUTOPILOT_PAID_GENERATION:-false}
       ALLOW_YOUTUBE_UPLOAD: ${ALLOW_YOUTUBE_UPLOAD:-false}
       ALLOW_PUBLIC_PUBLISHING: ${ALLOW_PUBLIC_PUBLISHING:-false}
+    volumes:
+      - kmf-media:/app/media
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${KMF_PORT:-3100}:3000"
     depends_on:
       db:
         condition: service_healthy
-    command: ["sh", "-c", "npx prisma db push && npm run seed && npm start"]
+    command: ["sh", "-c", "npx prisma db push --skip-generate && npm run seed && npm start"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
       interval: 10s
@@ -51,6 +59,10 @@ services:
       DATABASE_URL: postgresql://kmf:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/kmf?schema=public
       APP_SECRET: ${APP_SECRET:?Set APP_SECRET in .env}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3100}
+      ZERO_COST_MODE: ${ZERO_COST_MODE:-false}
+      MEDIA_STORAGE_PATH: /app/media
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-mock}
       PUBLISHING_PROVIDER: ${PUBLISHING_PROVIDER:-mock}
       CREATIVE_DIRECTOR: ${CREATIVE_DIRECTOR:-mock}
@@ -59,6 +71,10 @@ services:
       ALLOW_YOUTUBE_UPLOAD: ${ALLOW_YOUTUBE_UPLOAD:-false}
       ALLOW_PUBLIC_PUBLISHING: ${ALLOW_PUBLIC_PUBLISHING:-false}
       ANALYTICS_SYNC_MINUTES: ${ANALYTICS_SYNC_MINUTES:-30}
+    volumes:
+      - kmf-media:/app/media
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       app:
         condition: service_healthy
@@ -67,3 +83,4 @@ services:
 
 volumes:
   kmf-postgres:
+  kmf-media:

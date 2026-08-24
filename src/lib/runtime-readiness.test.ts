@@ -81,4 +81,16 @@ describe('runtime readiness', () => {
     const checks = evaluateRuntimeSafety({ ...base, TELEGRAM_BOT_TOKEN: 'token' });
     expect(readinessSummary(checks).ready).toBe(false);
   });
+
+  it('accepts local FFmpeg and overrides paid flags in zero-cost mode', () => {
+    const checks = evaluateRuntimeSafety({ ...base, ZERO_COST_MODE: 'true', VIDEO_PROVIDER: 'local-demo', CREATIVE_DIRECTOR: 'groq', ALLOW_PAID_GENERATION: 'true', ALLOW_AUTOPILOT_PAID_GENERATION: 'true' });
+    expect(readinessSummary(checks).ready).toBe(true);
+    expect(checks.find((item) => item.name === 'Paid generation lock')?.detail).toMatch(/hard locked/i);
+    expect(checks.find((item) => item.name === 'AI creative director')?.detail).toMatch(/Ollama/i);
+  });
+
+  it('requires the local renderer when zero-cost mode is enabled', () => {
+    const checks = evaluateRuntimeSafety({ ...base, ZERO_COST_MODE: 'true', VIDEO_PROVIDER: 'openart-mcp' });
+    expect(readinessSummary(checks).ready).toBe(false);
+  });
 });

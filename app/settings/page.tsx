@@ -37,6 +37,7 @@ export default async function SettingsPage() {
   const openArtConfigured = durableOpenArt || Boolean(process.env.OPENART_MCP_ACCESS_TOKEN || process.env.OPENART_MCP_REFRESH_TOKEN);
   const aiProvider = process.env.AI_PROVIDER || (process.env.GROQ_API_KEY ? 'groq' : process.env.OPENAI_API_KEY ? 'openai' : 'anthropic');
   const creativeDirector = process.env.CREATIVE_DIRECTOR || 'mock';
+  const zeroCost = process.env.ZERO_COST_MODE === 'true';
   const creativeBadge = creativeDirector === 'groq'
     ? `GROQ · ${process.env.GROQ_MODEL || 'openai/gpt-oss-120b'}`
     : creativeDirector === 'openai'
@@ -57,6 +58,8 @@ export default async function SettingsPage() {
         <p>Operational settings live here. Each factory channel can have its own encrypted YouTube OAuth connection.</p>
         <div className="hero-actions"><a className="button secondary" href="/setup">🚀 Launch wizard</a><LogoutForm /></div>
       </section>
+
+      {zeroCost ? <section className="notice"><strong>ZERO-COST TEST MODE</strong><br />Ollama with deterministic fallback · Local FFmpeg · $0 · OpenArt disabled · YouTube PRIVATE only.</section> : null}
 
       <section className="card">
         <div className="section-title">Factory control</div>
@@ -103,16 +106,16 @@ export default async function SettingsPage() {
 
           <section className="card">
             <div className="section-title">Provider status</div>
-            <div className="row"><span>AI bridge</span><span className="badge">{aiProvider.toUpperCase()}</span></div>
-            <div className="row"><span>Creative director</span><span className="badge">{creativeBadge.toUpperCase()}</span></div>
+            <div className="row"><span>AI bridge</span><span className="badge">{zeroCost ? 'NONE · LOCAL ONLY' : aiProvider.toUpperCase()}</span></div>
+            <div className="row"><span>Creative director</span><span className="badge">{zeroCost ? 'OLLAMA / DETERMINISTIC' : creativeBadge.toUpperCase()}</span></div>
             <div className="row"><span>Video generation</span><span className="badge">{(process.env.VIDEO_PROVIDER || 'mock').toUpperCase()}</span></div>
-            <div className="row"><span>OpenArt MCP OAuth</span><span className="badge">{openArtConfigured ? 'DURABLE / CONFIGURED' : 'NOT CONNECTED'}</span></div>
-            <div className="row"><span>Paid generation</span><span className="badge">{paidUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
-            <div className="row"><span>Autopilot paid generation</span><span className="badge">{autopilotPaidUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
+            <div className="row"><span>OpenArt MCP OAuth</span><span className="badge">{zeroCost ? 'PRESERVED · DISABLED' : openArtConfigured ? 'DURABLE / CONFIGURED' : 'NOT CONNECTED'}</span></div>
+            <div className="row"><span>Paid generation</span><span className="badge">{zeroCost ? 'HARD LOCKED' : paidUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
+            <div className="row"><span>Autopilot paid generation</span><span className="badge">{zeroCost ? 'HARD LOCKED' : autopilotPaidUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
             <div className="row"><span>OpenArt model preference</span><span className="badge">{process.env.VIDEO_MODEL_HINT || 'AUTO'}</span></div>
             <div className="row"><span>YouTube OAuth client</span><span className="badge">{youtubeClientConfigured ? 'CONFIGURED' : 'MISSING'}</span></div>
             <div className="row"><span>YouTube upload</span><span className="badge">{uploadUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
-            <div className="row"><span>Public publishing</span><span className="badge">{publicUnlocked ? 'UNLOCKED' : 'LOCKED'}</span></div>
+            <div className="row"><span>Public publishing</span><span className="badge">{publicUnlocked ? 'UNLOCKED' : zeroCost ? 'LOCKED · PRIVATE ONLY' : 'LOCKED'}</span></div>
             <div className="row"><span>Analytics refresh</span><span className="badge">{process.env.ANALYTICS_SYNC_MINUTES || '30'} MIN</span></div>
             <div className="row"><span>Telegram bot</span><span className="badge">{process.env.TELEGRAM_BOT_TOKEN ? 'CONFIGURED' : 'NOT CONNECTED'}</span></div>
           </section>

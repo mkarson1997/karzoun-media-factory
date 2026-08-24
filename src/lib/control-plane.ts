@@ -3,6 +3,7 @@ import { prisma } from './prisma';
 import { assertTransition, type JobStatus } from './job-state-machine';
 import { sendTelegramNotification } from './telegram-api';
 import { generationResetFields } from './generation-recovery';
+import { effectiveVideoProvider } from './zero-cost';
 
 const PRODUCTION_QUEUE_LOCK_ID = 88440021;
 const PUBLISH_SCHEDULE_LOCK_ID = 88440031;
@@ -95,7 +96,7 @@ export async function queuePrompt(promptId: string, actor = 'dashboard') {
         promptId: prompt.id,
         channelId: channel.id,
         status: PrismaJobStatus.QUEUED,
-        provider: process.env.VIDEO_PROVIDER || 'mock',
+        provider: effectiveVideoProvider(),
         requestedDuration: prompt.targetDurationSeconds
       }
     });
@@ -163,7 +164,7 @@ export async function claimJobTransition(jobId: string, from: JobStatus, to: Job
   });
 }
 
-export async function requestRegeneration(jobId: string, options?: { actor?: string; source?: 'DASHBOARD' | 'TELEGRAM' }) {
+export async function requestRegeneration(jobId: string, options?: { actor?: string; source?: 'DASHBOARD' | 'TELEGRAM'; reuseCreativePlan?: boolean }) {
   const actor = options?.actor ?? 'system';
   return prisma.$transaction(async (tx) => {
     const job = await tx.productionJob.findUnique({ where: { id: jobId } });
@@ -187,12 +188,14 @@ export async function requestRegeneration(jobId: string, options?: { actor?: str
       where: { id: job.id },
       data: {
         status: PrismaJobStatus.QUEUED,
+        provider: effectiveVideoProvider(job.provider),
         ...generationResetFields(),
         providerMetadata: Prisma.JsonNull,
+        ...(options?.reuseCreativePlan === false ? { creativeBrief: Prisma.JsonNull, creativeModel: null, creativePreparedAt: null, title: null, description: null, hashtags: [] } : {}),
         retryCount: { increment: 1 }
       }
     });
-    await tx.activityLog.create({ data: { actor, action: 'JOB_REGENERATION_REQUESTED', entityType: 'ProductionJob', entityId: job.id } });
+    await tx.activityLog.create({ data: { actor, action: 'JOB_REGENERATION_REQUESTED', entityType: 'ProductionJob', entityId: job.id, metadata: { reuseCreativePlan: options?.reuseCreativePlan !== false, provider: effectiveVideoProvider(job.provider) } } });
     return updated;
   });
 }

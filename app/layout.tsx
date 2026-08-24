@@ -18,6 +18,7 @@ const nav = [
 ] as const;
 
 function runtimeLabel() {
+  if (process.env.ZERO_COST_MODE === 'true') return 'ZERO-COST $0';
   const video = process.env.VIDEO_PROVIDER || 'mock';
   const publishing = process.env.PUBLISHING_PROVIDER || 'mock';
   const mockOnly = (video === 'mock' || video === 'mock-demo') && publishing === 'mock';

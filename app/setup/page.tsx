@@ -20,6 +20,7 @@ function phase(ok: boolean, label: string, detail: string) {
 }
 
 export default async function SetupPage() {
+  const zeroCost = process.env.ZERO_COST_MODE === 'true';
   const report = await getActivationReport();
   const telegramConfigured = report.checks.find((item) => item.id === 'telegram')?.state === 'PASS';
   const promptBankInstalled = report.counts.generalPrompts > 0;
@@ -39,12 +40,14 @@ export default async function SetupPage() {
         </div>
       </section>
 
+      {zeroCost ? <section className="notice"><strong>ZERO-COST TEST MODE</strong><br />Creative: local Ollama or deterministic fallback · Renderer: Local FFmpeg · OpenArt disabled · Cost $0 · YouTube PRIVATE only.</section> : null}
+
       <section className="card">
         <div className="section-title">Launch path</div>
         <div className="activation-phases">
           {phase(report.phases.mockReady, '1. Safe mock factory', 'Database, operator security, GENERAL channel and prompt bank.')}
-          {phase(report.phases.creativeConfigured, '2. AI creative director configured', 'OpenAI or Claude creative-director credentials are present. No paid render is required yet.')}
-          {phase(report.phases.realRenderConfigured, '3. Real renderer configured', 'OpenArt MCP is selected and connected through the selected AI bridge. Spending can remain locked.')}
+          {phase(zeroCost || report.phases.creativeConfigured, '2. Creative director configured', zeroCost ? 'Local Ollama is preferred and deterministic fallback is always available.' : 'A remote planner is configured with deterministic fallback.')}
+          {phase(zeroCost || report.phases.realRenderConfigured, '3. Real renderer configured', zeroCost ? 'Local FFmpeg creates persistent, playable vertical MP4 files for $0.' : 'OpenArt MCP is selected for production rendering.')}
           {phase(report.phases.privateYouTubeConfigured, '4. Private YouTube path configured', 'GENERAL channel OAuth is connected and YouTube is selected as publishing provider.')}
           {phase(report.phases.paidAutopilotReady, '5. Paid Autopilot explicitly unlocked', 'Both manual paid rendering and background Autopilot spending locks are open.')}
           {phase(report.phases.publicPublishingReady, '6. Public publishing unlocked', 'Final stage only after a PRIVATE end-to-end upload has been verified.')}

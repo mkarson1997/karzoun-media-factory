@@ -3,6 +3,7 @@ import { getAutopilotStatus, runAutopilotTick, setAutopilotEnabled } from './aut
 import { getFactoryCounters, listJobs, requestRegeneration, transitionJob } from './control-plane';
 import { approveAndSmartSchedule, getSmartPublishSuggestion } from './smart-scheduler';
 import { prisma } from './prisma';
+import { effectiveVideoProvider, zeroCostMode } from './zero-cost';
 
 function telegramConfig() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -111,7 +112,7 @@ export function createTelegramBot() {
       const production = settings?.productionPaused ? 'PAUSED' : 'RUNNING';
       const publishing = settings?.publishingPaused ? 'PAUSED' : 'RUNNING';
       const worker = heartbeat && Date.now() - heartbeat.createdAt.getTime() < 90_000 ? 'HEALTHY' : 'STALE/OFFLINE';
-      await ctx.reply(`🏭 Factory status\n\nWorker: ${worker}\nProduction: ${production}\nPublishing: ${publishing}\nAutopilot: ${autopilot.enabled ? 'ARMED' : 'OFF'}\n\nQueue: ${c.QUEUED}\nGenerating: ${c.GENERATING}\nReview: ${c.READY_FOR_REVIEW}\nApproved: ${c.APPROVED}\nScheduled: ${c.SCHEDULED}\nPublishing now: ${c.PUBLISHING}\nPublished: ${c.PUBLISHED}\nFailed: ${c.FAILED}`);
+      await ctx.reply(`🏭 Factory status\n\nWorker: ${worker}\nMode: ${zeroCostMode() ? 'ZERO-COST TEST ($0)' : 'PRODUCTION'}\nVideo: ${effectiveVideoProvider()}\nProduction: ${production}\nPublishing: ${publishing}\nAutopilot: ${autopilot.enabled ? 'ARMED' : 'OFF'}\n\nQueue: ${c.QUEUED}\nGenerating: ${c.GENERATING}\nReview: ${c.READY_FOR_REVIEW}\nApproved: ${c.APPROVED}\nScheduled: ${c.SCHEDULED}\nPublishing now: ${c.PUBLISHING}\nPublished: ${c.PUBLISHED}\nFailed: ${c.FAILED}`);
     } catch (error) {
       console.error('Telegram /status failed:', error instanceof Error ? error.message : 'unknown error');
       await ctx.reply('Database is not ready yet.');
