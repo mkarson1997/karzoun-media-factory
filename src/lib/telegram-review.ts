@@ -1,4 +1,8 @@
 import { Markup, Telegraf } from 'telegraf';
+import { prisma } from './prisma';
+
+const REVIEW_NOTIFICATION_ACTION = 'REVIEW_TELEGRAM_NOTIFICATION_SENT';
+let lastSweepAt = 0;
 
 function reviewUrlForTelegram(baseUrl: string) {
   try {
@@ -15,6 +19,31 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function alreadyNotified(jobId: string) {
+  return Boolean(await prisma.activityLog.findFirst({
+    where: {
+      action: REVIEW_NOTIFICATION_ACTION,
+      entityType: 'ProductionJob',
+      entityId: jobId
+    },
+    select: { id: true }
+  }).catch(() => null));
+}
+
+async function markNotified(jobId: string, mode: 'interactive' | 'plain') {
+  await prisma.activityLog.create({
+    data: {
+      actor: 'worker',
+      action: REVIEW_NOTIFICATION_ACTION,
+      entityType: 'ProductionJob',
+      entityId: jobId,
+      metadata: { mode }
+    }
+  }).catch((error) => {
+    console.error(`Could not persist Telegram review notification marker for ${jobId}: ${errorMessage(error)}`);
+  });
+}
+
 export async function notifyReviewReady(input: {
   jobId: string;
   externalPromptId: string;
@@ -29,6 +58,8 @@ export async function notifyReviewReady(input: {
     console.warn('Telegram review notification skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_ALLOWED_USER_ID is missing.');
     return false;
   }
+
+  if (await alreadyNotified(input.jobId)) return true;
 
   const baseUrl = process.env.APP_BASE_URL ?? 'http://localhost:3100';
   const reviewUrl = reviewUrlForTelegram(baseUrl);
@@ -54,6 +85,7 @@ export async function notifyReviewReady(input: {
       }
     );
     console.info(`Telegram review notification sent for ${input.externalPromptId}.`);
+    await markNotified(input.jobId, 'interactive');
     return true;
   } catch (interactiveError) {
     console.error(`Telegram interactive review notification failed for ${input.externalPromptId}: ${errorMessage(interactiveError)}`);
@@ -67,10 +99,41 @@ export async function notifyReviewReady(input: {
         { link_preview_options: { is_disabled: true } }
       );
       console.info(`Telegram plain-text fallback sent for ${input.externalPromptId}.`);
+      await markNotified(input.jobId, 'plain');
       return true;
     } catch (fallbackError) {
       console.error(`Telegram plain-text fallback failed for ${input.externalPromptId}: ${errorMessage(fallbackError)}`);
       throw fallbackError;
     }
   }
+}
+
+export async function sweepReadyReviewNotifications() {
+  if (Date.now() - lastSweepAt < 30_000) return 0;
+  lastSweepAt = Date.now();
+
+  const jobs = await prisma.productionJob.findMany({
+    where: { status: 'READY_FOR_REVIEW' },
+    include: { prompt: true },
+    orderBy: { updatedAt: 'asc' },
+    take: 10
+  });
+
+  let sent = 0;
+  for (const job of jobs) {
+    if (await alreadyNotified(job.id)) continue;
+    const ok = await notifyReviewReady({
+      jobId: job.id,
+      externalPromptId: job.prompt.externalPromptId,
+      concept: job.prompt.concept,
+      durationSeconds: job.requestedDuration,
+      provider: job.provider,
+      origin: job.origin
+    }).catch((error) => {
+      console.error(`Telegram ready-review sweep failed for ${job.prompt.externalPromptId}: ${errorMessage(error)}`);
+      return false;
+    });
+    if (ok) sent += 1;
+  }
+  return sent;
 }
