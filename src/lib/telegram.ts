@@ -126,7 +126,7 @@ export function createTelegramBot() {
         [Markup.button.callback('⚡ Queue next safe idea', 'autopilot:tick')]
       ];
       const settingsUrl = telegramPublicUrl(baseUrl, '/settings');
-      if (settingsUrl) rows[1].push(Markup.button.url('Autopilot settings', settingsUrl));
+      if (settingsUrl) rows[1].push(Markup.button.url('Autopilot settings', settingsUrl) as never);
       await ctx.reply(autopilotText(status), Markup.inlineKeyboard(rows));
     } catch (error) {
       console.error('Telegram /autopilot failed:', error instanceof Error ? error.message : 'unknown error');
@@ -177,7 +177,7 @@ export function createTelegramBot() {
           [Markup.button.callback('Approve only', `approve:${job.id}`), Markup.button.callback('🔄 Regenerate', `regenerate:${job.id}`)],
           [Markup.button.callback('❌ Reject', `reject:${job.id}`)]
         ];
-        if (reviewUrl) rows[2].push(Markup.button.url('▶ Open Review', reviewUrl));
+        if (reviewUrl) rows[2].push(Markup.button.url('▶ Open Review', reviewUrl) as never);
         await ctx.reply(
           `🎬 ${job.prompt.externalPromptId} · ${job.requestedDuration}s\n${shortConcept(job.prompt.concept)}\nProvider: ${job.provider}\nOrigin: ${job.origin}${reviewUrl ? '' : '\n\nReview dashboard is local-only on the factory computer.'}`,
           Markup.inlineKeyboard(rows)
@@ -200,7 +200,7 @@ export function createTelegramBot() {
       const suggestion = await getSmartPublishSuggestion(job.id);
       const rows = [[Markup.button.callback('✅ Schedule this slot', `schedule-smart:${job.id}`)]];
       const scheduleUrl = telegramPublicUrl(baseUrl, `/schedule?job=${job.id}`);
-      if (scheduleUrl) rows.push([Markup.button.url('Open Schedule', scheduleUrl)]);
+      if (scheduleUrl) rows.push([Markup.button.url('Open Schedule', scheduleUrl) as never]);
       await ctx.reply(
         `🗓 Smart publish suggestion\n\n${job.prompt.externalPromptId}\n${shortConcept(job.prompt.concept, 80)}\n\nTime: ${suggestion.localLabel}\nTimezone: ${suggestion.timezone}\nSource: ${suggestion.source}\n\n${suggestion.reason}`,
         Markup.inlineKeyboard(rows)
