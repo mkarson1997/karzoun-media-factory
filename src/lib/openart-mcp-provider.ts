@@ -94,9 +94,12 @@ function mcpCallNames(calls: JsonRecord[]) {
   return [...new Set(calls.map((call) => typeof call.name === 'string' ? call.name : null).filter((name): name is string => Boolean(name)))];
 }
 
+function writeCapableMcpCalls(calls: JsonRecord[]) {
+  return calls.filter((call) => typeof call.name === 'string' && WRITE_TOOL_RE.test(call.name));
+}
+
 function callsAreReadOnly(calls: JsonRecord[]) {
-  const names = mcpCallNames(calls);
-  return names.length > 0 && names.every((name) => !WRITE_TOOL_RE.test(name));
+  return calls.length > 0 && writeCapableMcpCalls(calls).length === 0;
 }
 
 function collectUrlsFromMcpCalls(calls: JsonRecord[]) {
@@ -136,6 +139,10 @@ function videoUrlCandidates(urls: string[], mcpServerUrl: string) {
 
 async function verifyPlayableVideoUrl(rawUrl: string) {
   const media = await openSafeRemoteMedia(rawUrl);
+  if (media.contentLength !== null && media.contentLength < 1024) {
+    media.stream.destroy();
+    throw new Error('Remote video asset is too small to be a completed render');
+  }
   media.stream.destroy();
   return media.finalUrl;
 }
@@ -306,17 +313,20 @@ async function generateViaOpenAICompatible(input: VideoGenerationRequest, token:
     lastResponse = response;
 
     const calls = getMcpCalls(response);
+    const writeCalls = writeCapableMcpCalls(calls);
     const status = getResponseStatus(response);
-    const urls = [...new Set([
-      ...collectUrlsFromMcpCalls(calls),
-      ...collectUrlsFromResponseMessages(response)
-    ])];
+    const urls = writeCalls.length
+      ? [...new Set([
+          ...collectUrlsFromMcpCalls(writeCalls),
+          ...collectUrlsFromResponseMessages(response)
+        ])]
+      : [];
 
-    if (urls.length || (status === 'completed' && calls.length > 0)) {
+    if (writeCalls.length > 0 && (urls.length > 0 || status === 'completed')) {
       return { id: typeof response.id === 'string' ? response.id : `groq-${input.jobId}`, payload: response };
     }
 
-    if (attempt < attempts && (calls.length === 0 || callsAreReadOnly(calls))) {
+    if (attempt < attempts && writeCalls.length === 0) {
       const detail = getIncompleteDetail(response);
       const names = mcpCallNames(calls);
       console.warn(`Groq OpenArt MCP execution attempt ${attempt}/${attempts} stopped before a write action (${status}${detail ? `: ${detail}` : ''}; tools: ${names.join(', ') || 'none'}). Retrying safely.`);
@@ -365,21 +375,26 @@ export class OpenArtMcpVideoProvider implements VideoGenerationProvider {
         throw new Error(`OpenArt MCP via ${aiProvider} returned no MCP tool execution. The render was not started and no OpenArt credits should have been spent.`);
       }
 
+      const writeCalls = writeCapableMcpCalls(mcpCalls);
+      if (!writeCalls.length) {
+        const names = mcpCallNames(mcpCalls);
+        const status = getResponseStatus(result.payload);
+        const detail = getIncompleteDetail(result.payload);
+        throw new Error(`OpenArt MCP via ${aiProvider} never executed a generation/write tool. Response status: ${status}.${detail ? ` Incomplete reason: ${detail}.` : ''} Tools: ${names.slice(0, 12).join(', ') || 'none'}. Metadata/example URLs are intentionally ignored, so no fake video can enter review.`);
+      }
+
       urls = [...new Set([
-        ...collectUrlsFromMcpCalls(mcpCalls),
+        ...collectUrlsFromMcpCalls(writeCalls),
         ...collectUrlsFromResponseMessages(result.payload)
       ])];
 
       if (!urls.length) {
-        const names = mcpCallNames(mcpCalls);
+        const names = mcpCallNames(writeCalls);
         const status = getResponseStatus(result.payload);
         const detail = getIncompleteDetail(result.payload);
         const calls = names.length ? ` Tools: ${names.slice(0, 12).join(', ')}.` : '';
         const incomplete = detail ? ` Incomplete reason: ${detail}.` : '';
-        const noWrite = callsAreReadOnly(mcpCalls)
-          ? ' Only read-only OpenArt tools ran, so no OpenArt generation should have been charged.'
-          : ' A write-capable tool may have run; check the OpenArt Media/Credits page before retrying to avoid a duplicate render.';
-        throw new Error(`OpenArt MCP via ${aiProvider} executed ${mcpCalls.length} MCP call(s) but returned no media URL. Response status: ${status}.${incomplete}${calls}${noWrite} The render is not complete.`);
+        throw new Error(`OpenArt MCP via ${aiProvider} executed ${writeCalls.length} write-capable MCP call(s) but returned no media URL. Response status: ${status}.${incomplete}${calls} Check OpenArt Media/Credits before retrying to avoid duplicate spending.`);
       }
     }
 
