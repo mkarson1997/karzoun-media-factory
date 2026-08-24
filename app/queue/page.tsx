@@ -39,6 +39,10 @@ export default async function QueuePage() {
             </div>
             <p>{job.prompt.concept}</p>
             <div className="row"><span>Provider</span><span className="badge">{job.provider.toUpperCase()}</span></div>
+            <div className="row"><span>Provider state</span><span className="badge">{job.providerStatus || 'NOT STARTED'}</span></div>
+            {job.creationId || job.providerJobId ? <div className="row"><span>Creation</span><span className="muted">{job.creationId || job.providerJobId}</span></div> : null}
+            {job.actualDuration ? <div className="row"><span>Actual duration</span><span>{job.actualDuration}s requested {job.requestedDuration}s</span></div> : null}
+            {job.nextPollAt ? <div className="row"><span>Next provider poll</span><span className="muted">{job.nextPollAt.toLocaleString()}</span></div> : null}
             {!mockJob && (job.status === 'QUEUED' || job.status === 'GENERATING') ? <p className="muted">Live-provider state is worker-owned. The dashboard cannot fake completion or skip the renderer.</p> : null}
             {looksStalled ? <div className="notice"><strong>Worker attention needed.</strong> This live job has stayed QUEUED for more than 20 seconds. Production may be marked RUNNING in settings while the worker container itself is restarting or blocked by startup configuration. Run <code>docker compose ps</code> and <code>docker compose logs --tail=120 worker</code> to see the exact cause.</div> : null}
             {job.schedule ? <div className="row"><span>Publish slot<small className="block muted">{job.schedule.timezone} · {job.schedule.visibility}</small></span><span className="badge">{job.schedule.publishAt.toLocaleString()}</span></div> : null}

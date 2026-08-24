@@ -3,6 +3,7 @@ import { getAutopilotStatus } from '@/src/lib/autopilot';
 import { getFactoryCounters, recentActivity } from '@/src/lib/control-plane';
 import { prisma } from '@/src/lib/prisma';
 import { getYouTubeConnectionStatus } from '@/src/lib/youtube-auth';
+import { hasDurableOpenArtOAuthCredential } from '@/src/lib/openart-oauth';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,8 @@ export default async function DashboardPage() {
   let settings: { productionPaused: boolean; publishingPaused: boolean } = { productionPaused: false, publishingPaused: false };
   let channels: Array<{ id: string; name: string; type: 'GENERAL' | 'KIDS_CHANNEL_ONLY'; externalChannelId: string | null }> = [];
   let autopilot: Awaited<ReturnType<typeof getAutopilotStatus>> | null = null;
+  let workerHeartbeat: Date | null = null;
+  let openArtOAuth = false;
   let upcoming: Array<{
     id: string;
     publishAt: Date;
@@ -52,7 +55,9 @@ export default async function DashboardPage() {
         },
         orderBy: { publishAt: 'asc' },
         take: 3
-      })
+      }),
+      prisma.activityLog.findFirst({ where: { action: 'WORKER_HEARTBEAT' }, select: { createdAt: true }, orderBy: { createdAt: 'desc' } }),
+      hasDurableOpenArtOAuthCredential().catch(() => false)
     ]);
     counters = result[0];
     activity = result[1];
@@ -60,6 +65,8 @@ export default async function DashboardPage() {
     channels = result[3];
     autopilot = result[4];
     upcoming = result[5];
+    workerHeartbeat = result[6]?.createdAt ?? null;
+    openArtOAuth = result[7];
   } catch {
     databaseReady = false;
   }
@@ -86,6 +93,7 @@ export default async function DashboardPage() {
 
   const generationMode = process.env.VIDEO_PROVIDER || 'mock';
   const publishingMode = process.env.PUBLISHING_PROVIDER || 'mock';
+  const workerHealthy = Boolean(workerHeartbeat && Date.now() - workerHeartbeat.getTime() < 90_000);
 
   const controlMap = [
     ['💡 Prompt Library', '/prompts', 'Choose or inspect ideas and send one into production.'],
@@ -171,6 +179,8 @@ export default async function DashboardPage() {
         <div className="card">
           <div className="section-title">Connections & interlocks</div>
           <div className="row"><span>Video provider</span><span className="badge">{generationMode.toUpperCase()}</span></div>
+          <div className="row"><span>OpenArt</span><span className="badge">{generationMode === 'openart-mcp' && openArtOAuth ? 'DIRECT MCP READY' : generationMode === 'openart-mcp' ? 'OAUTH NEEDED' : 'NOT SELECTED'}</span></div>
+          <div className="row"><span>Worker</span><span className="badge">{workerHealthy ? 'HEALTHY' : 'STALE / OFFLINE'}</span></div>
           <div className="row"><span>Paid generation</span><span className="badge">{process.env.ALLOW_PAID_GENERATION === 'true' ? 'UNLOCKED' : 'LOCKED'}</span></div>
           <div className="row"><span>YouTube channels</span><span className="badge">{connectedYouTube}/{channels.length} CONNECTED</span></div>
           <div className="row"><span>Publishing provider</span><span className="badge">{publishingMode.toUpperCase()}</span></div>

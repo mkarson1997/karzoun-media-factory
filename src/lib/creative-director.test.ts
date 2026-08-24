@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { getCreativeDirector, MockCreativeDirector, normalizeCreativeTitle, OpenAICreativeDirector, validateTimeline } from './creative-director';
+import { DeterministicCreativeDirector, getCreativeDirector, MockCreativeDirector, normalizeCreativeTitle, ResilientCreativeDirector, validateTimeline } from './creative-director';
 
 describe('creative director', () => {
   afterEach(() => { delete process.env.CREATIVE_DIRECTOR; });
@@ -31,7 +31,7 @@ describe('creative director', () => {
 
   it('selects OpenAI without making a network call', () => {
     process.env.CREATIVE_DIRECTOR = 'openai';
-    expect(getCreativeDirector()).toBeInstanceOf(OpenAICreativeDirector);
+    expect(getCreativeDirector()).toBeInstanceOf(ResilientCreativeDirector);
   });
 
   it('marks kids plans for isolated routing', async () => {
@@ -44,5 +44,18 @@ describe('creative director', () => {
       channelType: 'KIDS_CHANNEL_ONLY'
     });
     expect(result.plan.safetyNotes.join(' ')).toContain('Kids-only');
+  });
+
+  it('builds a valid production plan without any API call', async () => {
+    const result = await new DeterministicCreativeDirector().prepare({ externalPromptId: 'KMF-0649', category: 'Science', concept: 'A drop becomes a cloud', fullPrompt: 'Show the water cycle as an original cinematic miniature.', durationSeconds: 45, channelType: 'GENERAL' });
+    expect(result.model).toBe('deterministic-local');
+    expect(result.plan.title.length).toBeLessThanOrEqual(55);
+    expect(result.plan.shots.length).toBeGreaterThanOrEqual(5);
+    expect(() => validateTimeline(result.plan, 45)).not.toThrow();
+  });
+
+  it('falls through an unavailable remote name to deterministic local planning', async () => {
+    const result = await new ResilientCreativeDirector('unavailable').prepare({ externalPromptId: 'KMF-0649', category: 'Nature', concept: 'Cloud forest', fullPrompt: 'Create a safe original cloud forest short.', durationSeconds: 30, channelType: 'GENERAL' });
+    expect(result.model).toBe('deterministic-local');
   });
 });

@@ -1,19 +1,21 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from './lib/prisma';
 import { runAutopilotTick } from './lib/autopilot';
-import { attachGeneratedMedia, claimJobTransition, transitionJob } from './lib/control-plane';
+import { claimJobTransition, transitionJob } from './lib/control-plane';
 import { getCreativeDirector, type CreativePlan } from './lib/creative-director';
 import { evaluateCreativeQuality } from './lib/creative-quality';
 import { getOpenArtAccessToken } from './lib/openart-oauth';
 import { getPublishingProvider, getVideoGenerationProvider } from './lib/providers';
 import { evaluateRuntimeSafety, readinessSummary } from './lib/runtime-readiness';
 import { createTelegramBot, notifyOperator } from './lib/telegram';
-import { notifyReviewReady } from './lib/telegram-review';
+import { notifyJobFailureOnce, notifyReviewReady, sweepReadyReviewNotifications } from './lib/telegram-review';
 import { syncPublishedAnalytics } from './lib/youtube-analytics';
+import { generationWorkDecision } from './lib/generation-recovery';
 
 let stopping = false;
 let lastAnalyticsSyncAt = 0;
 let lastAutopilotTickAt = 0;
+let lastHeartbeatAt = 0;
 
 function autopilotExecutionBlocked(job: { origin: string; provider: string }) {
   const isAutopilot = job.origin === 'AUTOPILOT';
@@ -23,7 +25,10 @@ function autopilotExecutionBlocked(job: { origin: string; provider: string }) {
 }
 
 async function prepareCreativePlan(job: { id: string; requestedDuration: number; creativeBrief: Prisma.JsonValue | null; prompt: { externalPromptId: string; category: string; concept: string; fullPrompt: string; channelType: 'GENERAL' | 'KIDS_CHANNEL_ONLY' } }) {
-  if (job.creativeBrief) return job.creativeBrief as unknown as CreativePlan;
+  if (job.creativeBrief) {
+    console.info(`[JOB ${job.prompt.externalPromptId}] creative plan ready (reused)`);
+    return job.creativeBrief as unknown as CreativePlan;
+  }
 
   const director = getCreativeDirector();
   const result = await director.prepare({
@@ -39,7 +44,7 @@ async function prepareCreativePlan(job: { id: string; requestedDuration: number;
     durationSeconds: job.requestedDuration,
     channelType: job.prompt.channelType
   });
-  if (result.model !== 'mock-creative-director' && quality.blocking.length) {
+  if (quality.blocking.length) {
     throw new Error(`Creative quality gate blocked rendering: ${quality.blocking.join('; ')}`);
   }
 
@@ -68,48 +73,102 @@ async function prepareCreativePlan(job: { id: string; requestedDuration: number;
       }
     }
   });
+  console.info(`[JOB ${job.prompt.externalPromptId}] creative plan ready (${result.model})`);
   return result.plan;
 }
 
-async function pollOneMockGeneration() {
+function errorMessage(error: unknown, fallback: string) {
+  return (error instanceof Error ? error.message : fallback).replace(/(?:sk-|gsk_|Bearer\s+)[A-Za-z0-9._-]+/gi, '[redacted]').slice(0, 500);
+}
+
+function nextPollDate(seconds = 15) {
+  return new Date(Date.now() + Math.max(5, Math.min(300, seconds)) * 1000);
+}
+
+async function failGeneration(job: { id: string; generationAttempt: number; prompt: { externalPromptId: string } }, reason: string, providerStatus = 'FAILED') {
+  const failed = await claimJobTransition(job.id, 'GENERATING', 'FAILED', 'worker').catch(() => false);
+  if (!failed) return;
+  await prisma.productionJob.update({ where: { id: job.id }, data: { failureReason: reason, providerStatus, completedAt: new Date(), nextPollAt: null } });
+  console.error(`[JOB ${job.prompt.externalPromptId}] failed: ${reason}`);
+  await notifyJobFailureOnce({ jobId: job.id, externalPromptId: job.prompt.externalPromptId, generationAttempt: job.generationAttempt, reason }).catch(() => undefined);
+}
+
+async function pollOneGeneration() {
+  const now = new Date();
   const generating = await prisma.productionJob.findFirst({
-    where: { status: 'GENERATING', provider: { in: ['mock', 'mock-demo'] }, providerJobId: { not: null } },
+    where: { status: 'GENERATING', OR: [{ nextPollAt: null }, { nextPollAt: { lte: now } }] },
     include: { prompt: true },
-    orderBy: { updatedAt: 'asc' }
+    orderBy: [{ nextPollAt: 'asc' }, { updatedAt: 'asc' }]
   });
-  if (!generating?.providerJobId) return false;
+  if (!generating) return false;
+
+  const providerJobId = generating.creationId || generating.providerJobId;
+  if (!providerJobId) {
+    const decision = generationWorkDecision({ ...generating, startedAt: generating.startedAt || generating.updatedAt }, now);
+    if (decision === 'WAIT') return true;
+    await failGeneration(generating, 'Generation submission outcome is unknown after worker interruption. Automatic resubmission is blocked to prevent duplicate paid work; inspect OpenArt history before retrying.', 'SUBMISSION_UNCERTAIN');
+    return true;
+  }
 
   try {
     const provider = await getVideoGenerationProvider(generating.provider);
-    const result = await provider.getJobStatus(generating.providerJobId);
+    const result = await provider.getJobStatus(providerJobId);
+    const status = result.providerStatus || result.status;
+    if (status !== generating.providerStatus) console.info(`[JOB ${generating.prompt.externalPromptId}] status: ${status.toLowerCase()}`);
+
+    if (result.status === 'FAILED') {
+      await failGeneration(generating, errorMessage(result.failureReason, 'OpenArt generation failed'), status);
+      return true;
+    }
+
     if (result.status === 'READY_FOR_REVIEW') {
-      await attachGeneratedMedia(generating.id, {
-        providerJobId: generating.providerJobId,
+      if (!result.videoUrl && generating.provider !== 'mock' && generating.provider !== 'mock-demo') {
+        await failGeneration(generating, 'Provider reported completion without an accessible video asset', 'COMPLETED_WITHOUT_MEDIA');
+        return true;
+      }
+      await prisma.productionJob.update({ where: { id: generating.id }, data: {
+        providerJobId,
+        creationId: generating.provider === 'openart-mcp' ? providerJobId : generating.creationId,
+        providerStatus: status,
+        providerMetadata: result.providerMetadata as Prisma.InputJsonValue | undefined,
         videoUrl: result.videoUrl,
-        thumbnailUrl: result.thumbnailUrl
-      });
+        thumbnailUrl: result.thumbnailUrl,
+        actualDuration: result.actualDuration || generating.actualDuration,
+        lastPolledAt: now,
+        nextPollAt: null,
+        completedAt: now,
+        failureReason: null
+      } });
       const claimed = await claimJobTransition(generating.id, 'GENERATING', 'READY_FOR_REVIEW', 'worker');
       if (claimed) {
+        console.info(`[JOB ${generating.prompt.externalPromptId}] completed`);
+        if (result.videoUrl) console.info(`[JOB ${generating.prompt.externalPromptId}] media URL captured`);
         await notifyReviewReady({
           jobId: generating.id,
           externalPromptId: generating.prompt.externalPromptId,
           concept: generating.prompt.concept,
           durationSeconds: generating.requestedDuration,
           provider: generating.provider,
-          origin: generating.origin
+          origin: generating.origin,
+          creationId: generating.creationId || providerJobId,
+          providerStatus: status,
+          generationAttempt: generating.generationAttempt
         }).catch(() => undefined);
       }
+    } else {
+      await prisma.productionJob.update({ where: { id: generating.id }, data: {
+        providerStatus: status,
+        providerMetadata: result.providerMetadata as Prisma.InputJsonValue | undefined,
+        lastPolledAt: now,
+        nextPollAt: nextPollDate(result.nextPollSeconds),
+        failureReason: null
+      } });
     }
     return true;
   } catch (error) {
-    const failed = await claimJobTransition(generating.id, 'GENERATING', 'FAILED', 'worker').catch(() => false);
-    if (failed) {
-      await prisma.productionJob.update({
-        where: { id: generating.id },
-        data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Generation polling failed' }
-      }).catch(() => undefined);
-      await notifyOperator(`⚠️ Generation failed for ${generating.prompt.externalPromptId}.`).catch(() => undefined);
-    }
+    const reason = errorMessage(error, 'Generation polling temporarily failed');
+    console.warn(`[JOB ${generating.prompt.externalPromptId}] polling delayed: ${reason}`);
+    await prisma.productionJob.update({ where: { id: generating.id }, data: { failureReason: `Polling will retry: ${reason}`, lastPolledAt: now, nextPollAt: nextPollDate(60) } }).catch(() => undefined);
     return true;
   }
 }
@@ -130,49 +189,65 @@ async function startOneGeneration() {
   if (!claimed) return true;
 
   try {
+    const attempt = queued.generationAttempt + 1;
+    await prisma.productionJob.update({ where: { id: queued.id }, data: { generationAttempt: attempt, providerStatus: 'PREPARING', startedAt: new Date(), lastPolledAt: null, nextPollAt: null, completedAt: null, failureReason: null } });
     const creativePlan = await prepareCreativePlan(queued);
     const provider = await getVideoGenerationProvider(queued.provider);
+    await prisma.productionJob.update({ where: { id: queued.id }, data: { providerStatus: 'SUBMITTING' } });
+    console.info(`[JOB ${queued.prompt.externalPromptId}] submitting generation`);
     const result = await provider.generateVideo({
       jobId: queued.id,
+      externalJobId: queued.prompt.externalPromptId,
       prompt: JSON.stringify(creativePlan),
       durationSeconds: queued.requestedDuration
     });
 
-    await attachGeneratedMedia(queued.id, {
+    await prisma.productionJob.update({ where: { id: queued.id }, data: {
       providerJobId: result.providerJobId,
+      creationId: queued.provider === 'openart-mcp' ? result.providerJobId : null,
+      providerStatus: result.providerStatus || result.status,
+      providerMetadata: result.providerMetadata as Prisma.InputJsonValue | undefined,
       videoUrl: result.videoUrl,
-      thumbnailUrl: result.thumbnailUrl
-    });
+      thumbnailUrl: result.thumbnailUrl,
+      actualDuration: result.actualDuration,
+      lastPolledAt: new Date(),
+      nextPollAt: result.status === 'GENERATING' ? nextPollDate(result.nextPollSeconds) : null
+    } });
+    console.info(`[JOB ${queued.prompt.externalPromptId}] OpenArt creation: ${result.providerJobId}`);
+    console.info(`[JOB ${queued.prompt.externalPromptId}] status: ${(result.providerStatus || result.status).toLowerCase()}`);
 
     if (result.status === 'READY_FOR_REVIEW') {
+      if (!result.videoUrl && queued.provider !== 'mock' && queued.provider !== 'mock-demo') throw new Error('Provider completed without an accessible video URL');
+      await prisma.productionJob.update({ where: { id: queued.id }, data: { completedAt: new Date() } });
       const ready = await claimJobTransition(queued.id, 'GENERATING', 'READY_FOR_REVIEW', 'worker');
       if (ready) {
+        console.info(`[JOB ${queued.prompt.externalPromptId}] completed`);
+        if (result.videoUrl) console.info(`[JOB ${queued.prompt.externalPromptId}] media URL captured`);
         await notifyReviewReady({
           jobId: queued.id,
           externalPromptId: queued.prompt.externalPromptId,
           concept: queued.prompt.concept,
           durationSeconds: queued.requestedDuration,
           provider: queued.provider,
-          origin: queued.origin
+          origin: queued.origin,
+          creationId: result.providerJobId,
+          providerStatus: result.providerStatus || result.status,
+          generationAttempt: attempt
         }).catch(() => undefined);
       }
     }
     return true;
   } catch (error) {
-    const failed = await claimJobTransition(queued.id, 'GENERATING', 'FAILED', 'worker').catch(() => false);
-    if (failed) {
-      await prisma.productionJob.update({
-        where: { id: queued.id },
-        data: { failureReason: error instanceof Error ? error.message.slice(0, 500) : 'Creative planning or generation failed' }
-      }).catch(() => undefined);
-      await notifyOperator(`⚠️ Creative planning/generation failed for ${queued.prompt.externalPromptId}.`).catch(() => undefined);
-    }
+    const reason = errorMessage(error, 'Creative planning or generation failed');
+    const current = await prisma.productionJob.findUnique({ where: { id: queued.id }, select: { providerStatus: true, generationAttempt: true } });
+    const uncertain = current?.providerStatus === 'SUBMITTING' && queued.provider === 'openart-mcp';
+    await failGeneration({ ...queued, generationAttempt: current?.generationAttempt || queued.generationAttempt + 1 }, reason, uncertain ? 'SUBMISSION_UNCERTAIN' : 'FAILED');
     return true;
   }
 }
 
 async function processOneGenerationJob() {
-  if (await pollOneMockGeneration()) return;
+  if (await pollOneGeneration()) return;
   await startOneGeneration();
 }
 
@@ -282,6 +357,11 @@ async function maybeSyncAnalytics() {
 }
 
 async function processCycle() {
+  if (Date.now() - lastHeartbeatAt >= 30_000) {
+    lastHeartbeatAt = Date.now();
+    await prisma.activityLog.create({ data: { actor: 'worker', action: 'WORKER_HEARTBEAT', entityType: 'Worker', entityId: 'generation-worker', metadata: { videoProvider: process.env.VIDEO_PROVIDER || 'mock', publishingProvider: process.env.PUBLISHING_PROVIDER || 'mock' } } });
+    await prisma.activityLog.deleteMany({ where: { action: 'WORKER_HEARTBEAT', createdAt: { lt: new Date(Date.now() - 24 * 60 * 60_000) } } }).catch(() => undefined);
+  }
   const settings = await prisma.appSettings.findUnique({ where: { id: 'singleton' } });
   if (!settings?.productionPaused) {
     await maybeRunAutopilot();
@@ -292,6 +372,7 @@ async function processCycle() {
     await processOnePublishJob();
   }
   await maybeSyncAnalytics();
+  await sweepReadyReviewNotifications();
 }
 
 async function main() {
@@ -304,7 +385,7 @@ async function main() {
   if ((process.env.VIDEO_PROVIDER || 'mock') === 'openart-mcp') {
     const token = await getOpenArtAccessToken();
     if (!token) throw new Error('Worker startup blocked: OpenArt OAuth could not resolve an access token from the durable credential store or .env fallback');
-    console.log('OpenArt OAuth ready. Durable credential or .env fallback resolved successfully.');
+    console.log('OpenArt OAuth ready. Direct MCP rendering is enabled; no LLM orchestration is used.');
   }
 
   const bot = createTelegramBot();

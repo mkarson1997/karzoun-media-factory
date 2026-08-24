@@ -102,14 +102,16 @@ export function createTelegramBot() {
 
   bot.command('status', async (ctx) => {
     try {
-      const [c, settings, autopilot] = await Promise.all([
+      const [c, settings, autopilot, heartbeat] = await Promise.all([
         getFactoryCounters(),
         prisma.appSettings.findUnique({ where: { id: 'singleton' } }),
-        getAutopilotStatus()
+        getAutopilotStatus(),
+        prisma.activityLog.findFirst({ where: { action: 'WORKER_HEARTBEAT' }, orderBy: { createdAt: 'desc' } })
       ]);
       const production = settings?.productionPaused ? 'PAUSED' : 'RUNNING';
       const publishing = settings?.publishingPaused ? 'PAUSED' : 'RUNNING';
-      await ctx.reply(`🏭 Factory status\n\nProduction: ${production}\nPublishing: ${publishing}\nAutopilot: ${autopilot.enabled ? 'ARMED' : 'OFF'}\n\nQueued: ${c.QUEUED}\nGenerating: ${c.GENERATING}\nReady for review: ${c.READY_FOR_REVIEW}\nApproved: ${c.APPROVED}\nScheduled: ${c.SCHEDULED}\nPublished: ${c.PUBLISHED}\nFailed: ${c.FAILED}`);
+      const worker = heartbeat && Date.now() - heartbeat.createdAt.getTime() < 90_000 ? 'HEALTHY' : 'STALE/OFFLINE';
+      await ctx.reply(`🏭 Factory status\n\nWorker: ${worker}\nProduction: ${production}\nPublishing: ${publishing}\nAutopilot: ${autopilot.enabled ? 'ARMED' : 'OFF'}\n\nQueue: ${c.QUEUED}\nGenerating: ${c.GENERATING}\nReview: ${c.READY_FOR_REVIEW}\nApproved: ${c.APPROVED}\nScheduled: ${c.SCHEDULED}\nPublishing now: ${c.PUBLISHING}\nPublished: ${c.PUBLISHED}\nFailed: ${c.FAILED}`);
     } catch (error) {
       console.error('Telegram /status failed:', error instanceof Error ? error.message : 'unknown error');
       await ctx.reply('Database is not ready yet.');
@@ -156,9 +158,9 @@ export function createTelegramBot() {
 
   bot.command('queue', async (ctx) => {
     try {
-      const jobs = await listJobs({ take: 5 });
+      const jobs = await prisma.productionJob.findMany({ where: { status: { in: ['QUEUED', 'GENERATING', 'READY_FOR_REVIEW', 'APPROVED', 'SCHEDULED', 'PUBLISHING', 'FAILED'] } }, include: { prompt: true, channel: true, schedule: true }, orderBy: { updatedAt: 'desc' }, take: 10 });
       if (!jobs.length) return void await ctx.reply('Queue is empty.');
-      const text = jobs.map((job) => `${job.status} · ${job.prompt.externalPromptId}\n${shortConcept(job.prompt.concept, 80)}`).join('\n\n');
+      const text = jobs.map((job) => `${job.status} · ${job.prompt.externalPromptId}\nProvider: ${job.provider}${job.providerStatus ? ` · ${job.providerStatus}` : ''}\n${shortConcept(job.prompt.concept, 80)}`).join('\n\n');
       await replyWithOptionalUrl(ctx, text, baseUrl, 'Open Queue', '/queue');
     } catch (error) {
       console.error('Telegram /queue failed:', error instanceof Error ? error.message : 'unknown error');
@@ -179,7 +181,7 @@ export function createTelegramBot() {
         ];
         if (reviewUrl) rows[2].push(Markup.button.url('▶ Open Review', reviewUrl) as never);
         await ctx.reply(
-          `🎬 ${job.prompt.externalPromptId} · ${job.requestedDuration}s\n${shortConcept(job.prompt.concept)}\nProvider: ${job.provider}\nOrigin: ${job.origin}${reviewUrl ? '' : '\n\nReview dashboard is local-only on the factory computer.'}`,
+          `🎬 ${job.prompt.externalPromptId} · ${job.actualDuration || job.requestedDuration}s\n${shortConcept(job.prompt.concept)}\nProvider: ${job.provider}\nStatus: ${job.providerStatus || job.status}\nCreation: ${job.creationId || job.providerJobId || 'n/a'}\nOrigin: ${job.origin}${reviewUrl ? '' : '\n\nAll primary actions work below without opening localhost.'}`,
           Markup.inlineKeyboard(rows)
         );
       }

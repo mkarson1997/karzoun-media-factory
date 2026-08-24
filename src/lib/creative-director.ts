@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
-import { createOpenAIResponse, getOpenAIOutputText, responsesProviderConfigured, selectedOpenAIModel, selectedResponsesProvider } from './openai-responses';
+import { createOpenAIResponse, getOpenAIOutputText, responsesProviderConfigured, selectedOpenAIModel } from './openai-responses';
 
 export const creativePlanSchema = z.object({
   hook: z.string().min(1).max(220),
@@ -72,7 +72,7 @@ function parseCreativePlan(text: string, durationSeconds: number) {
   return plan;
 }
 
-export class MockCreativeDirector implements CreativeDirector {
+export class DeterministicCreativeDirector implements CreativeDirector {
   async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
     const shotCount = Math.max(5, Math.min(12, Math.ceil(input.durationSeconds / 5)));
     const shots = Array.from({ length: shotCount }, (_, index) => {
@@ -81,19 +81,19 @@ export class MockCreativeDirector implements CreativeDirector {
       return {
         startSecond,
         endSecond,
-        visualPrompt: `${input.fullPrompt}\nMock visual beat ${index + 1}/${shotCount}. Advance the story with a distinct composition, action and foreground/background relationship. Original imagery only.`,
+        visualPrompt: `${input.fullPrompt}\nVisual beat ${index + 1}/${shotCount}: ${index === 0 ? 'open with an unmistakable visual hook' : index === shotCount - 1 ? 'deliver the payoff and compose a clean visual loop' : 'advance the idea with a new action, scale and foreground/background relationship'}. Original imagery only, vertical 9:16, no logos or copyrighted characters.`,
         camera: index === 0 ? 'Immediate establishing hook into a controlled push-in.' : index === shotCount - 1 ? 'Resolve on a clean final composition that can loop into the opening.' : `Motivated shot ${index + 1}: vary scale and movement while preserving continuity.`,
         narration: ''
       };
     });
 
     return {
-      model: 'mock-creative-director',
+      model: 'deterministic-local',
       plan: creativePlanSchema.parse({
-        hook: `What happens if we visualize this: ${input.concept}?`,
-        script: `This is a deterministic mock creative plan for ${input.concept}. It exercises pacing, continuity, review, scheduling and safety gates without calling an AI model or spending provider credits.`,
+        hook: `See ${input.concept} unfold in one clear visual story.`,
+        script: `${input.fullPrompt} Open immediately on the central idea, build it through distinct visual beats, and finish with a clear, truthful payoff that naturally returns to the opening image. Keep every scene original, easy to understand without context, and paced for a ${input.durationSeconds}-second vertical Short.`,
         title: input.concept.slice(0, 55),
-        description: 'Mock-mode production plan. A live AI creative director replaces this only after it is explicitly enabled.',
+        description: `An original ${input.category.toLowerCase()} short about ${input.concept}.`,
         hashtags: ['#Shorts', '#Original', '#KarzounMediaLab'],
         visualStyle: 'Original cinematic vertical short, clean high-contrast composition, varied shot scale, no copyrighted characters or logos.',
         audioDirection: 'Original or licensed audio only. Clear narration when present and restrained sound design.',
@@ -106,26 +106,37 @@ export class MockCreativeDirector implements CreativeDirector {
   }
 }
 
-export class OpenAICreativeDirector implements CreativeDirector {
+export class MockCreativeDirector extends DeterministicCreativeDirector {
   async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
-    if (!responsesProviderConfigured()) {
-      const provider = selectedResponsesProvider();
+    const result = await super.prepare(input);
+    return { ...result, model: 'mock-creative-director' };
+  }
+}
+
+export class OpenAICreativeDirector implements CreativeDirector {
+  constructor(private readonly responsesProvider: 'openai' | 'groq' = 'openai') {}
+
+  async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
+    if (!responsesProviderConfigured(process.env, this.responsesProvider)) {
+      const provider = this.responsesProvider;
       throw new Error(`${provider === 'groq' ? 'Groq' : 'OpenAI'} creative director credentials are missing`);
     }
-    const model = selectedOpenAIModel();
+    const model = selectedOpenAIModel(this.responsesProvider);
     const response = await createOpenAIResponse({
       model,
       reasoning: { effort: process.env.OPENAI_REASONING_EFFORT || 'low' },
-      max_output_tokens: selectedResponsesProvider() === 'groq' ? 1800 : 3500,
+      max_output_tokens: this.responsesProvider === 'groq' ? 1800 : 3500,
       instructions: CREATIVE_SYSTEM,
       input: creativePrompt(input),
       text: { verbosity: 'low' }
-    });
+    }, this.responsesProvider, { maxAttempts: 1 });
     return { model, plan: parseCreativePlan(getOpenAIOutputText(response), input.durationSeconds) };
   }
 }
 
-export class GroqCreativeDirector extends OpenAICreativeDirector {}
+export class GroqCreativeDirector extends OpenAICreativeDirector {
+  constructor() { super('groq'); }
+}
 
 export class AnthropicCreativeDirector implements CreativeDirector {
   async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
@@ -145,6 +156,36 @@ export class AnthropicCreativeDirector implements CreativeDirector {
   }
 }
 
+function remoteDirector(provider: string): CreativeDirector | null {
+  if (provider === 'openai') return new OpenAICreativeDirector();
+  if (provider === 'groq') return new GroqCreativeDirector();
+  if (provider === 'anthropic') return new AnthropicCreativeDirector();
+  return null;
+}
+
+function conciseError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/(?:sk-|gsk_|Bearer\s+)[A-Za-z0-9._-]+/gi, '[redacted]').slice(0, 240);
+}
+
+export class ResilientCreativeDirector implements CreativeDirector {
+  constructor(private readonly primary: string, private readonly fallback?: string) {}
+
+  async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
+    const providers = [...new Set([this.primary, this.fallback].filter((value): value is string => Boolean(value)))];
+    for (const provider of providers) {
+      const director = remoteDirector(provider);
+      if (!director) continue;
+      try {
+        return await director.prepare(input);
+      } catch (error) {
+        console.warn(`Creative director ${provider} unavailable; continuing with fallback: ${conciseError(error)}`);
+      }
+    }
+    return new DeterministicCreativeDirector().prepare(input);
+  }
+}
+
 export function validateTimeline(plan: CreativePlan, durationSeconds: number) {
   const shots = plan.shots;
   if (Math.abs(shots[0].startSecond) > 0.01) throw new Error('Creative plan must start at second 0');
@@ -157,8 +198,6 @@ export function validateTimeline(plan: CreativePlan, durationSeconds: number) {
 
 export function getCreativeDirector(): CreativeDirector {
   const provider = process.env.CREATIVE_DIRECTOR || 'mock';
-  if (provider === 'openai') return new OpenAICreativeDirector();
-  if (provider === 'groq') return new GroqCreativeDirector();
-  if (provider === 'anthropic') return new AnthropicCreativeDirector();
+  if (remoteDirector(provider)) return new ResilientCreativeDirector(provider, process.env.CREATIVE_DIRECTOR_FALLBACK);
   return new MockCreativeDirector();
 }

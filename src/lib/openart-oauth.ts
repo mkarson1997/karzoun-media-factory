@@ -10,6 +10,7 @@ type OpenArtOAuthCredential = {
   tokenEndpoint?: string;
   scope?: string;
   tokenEndpointAuthMethod?: string;
+  expiresAt?: string;
 };
 
 type TokenResponse = {
@@ -91,11 +92,13 @@ function refreshRequest(credential: OpenArtOAuthCredential) {
   return { body, headers };
 }
 
-export async function getOpenArtAccessToken(): Promise<string | null> {
+export async function getOpenArtAccessToken(options?: { forceRefresh?: boolean }): Promise<string | null> {
   const credential = await readCredential();
   const refresh = refreshRequest(credential);
 
   if (!refresh) return credential.accessToken ?? null;
+  const expiresAt = credential.expiresAt ? Date.parse(credential.expiresAt) : 0;
+  if (!options?.forceRefresh && credential.accessToken && expiresAt > Date.now() + 60_000) return credential.accessToken;
 
   try {
     const response = await fetch(credential.tokenEndpoint!, {
@@ -120,7 +123,8 @@ export async function getOpenArtAccessToken(): Promise<string | null> {
       ...credential,
       accessToken: payload.access_token,
       refreshToken: payload.refresh_token || credential.refreshToken,
-      scope: payload.scope || credential.scope
+      scope: payload.scope || credential.scope,
+      expiresAt: payload.expires_in ? new Date(Date.now() + payload.expires_in * 1000).toISOString() : credential.expiresAt
     };
 
     await persistCredential(updated);

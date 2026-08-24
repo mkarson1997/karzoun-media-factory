@@ -20,10 +20,6 @@ function safeBaseUrl(value: string | undefined) {
   }
 }
 
-function selectedAiProvider(env: NodeJS.ProcessEnv) {
-  return env.AI_PROVIDER || (configured(env.GROQ_API_KEY) ? 'groq' : configured(env.OPENAI_API_KEY) ? 'openai' : 'anthropic');
-}
-
 function aiProviderConfigured(env: NodeJS.ProcessEnv, provider: string) {
   if (provider === 'groq') return configured(env.GROQ_API_KEY);
   if (provider === 'openai') return configured(env.OPENAI_API_KEY);
@@ -36,7 +32,6 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
   const videoProvider = env.VIDEO_PROVIDER || 'mock';
   const publishingProvider = env.PUBLISHING_PROVIDER || 'mock';
   const creativeDirector = env.CREATIVE_DIRECTOR || 'mock';
-  const aiProvider = selectedAiProvider(env);
   const paid = env.ALLOW_PAID_GENERATION === 'true';
   const autopilotPaid = env.ALLOW_AUTOPILOT_PAID_GENERATION === 'true';
   const uploads = env.ALLOW_YOUTUBE_UPLOAD === 'true';
@@ -67,20 +62,21 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
   ];
 
   if (creativeDirector === 'openai' || creativeDirector === 'groq' || creativeDirector === 'anthropic') {
+    const remoteReady = aiProviderConfigured(env, creativeDirector);
     checks.push({
       name: 'AI creative director',
-      ok: aiProviderConfigured(env, creativeDirector),
-      severity: 'required',
-      detail: aiProviderConfigured(env, creativeDirector) ? `${creativeDirector} creative director configured` : `${creativeDirector} creative director credentials missing`
+      ok: true,
+      severity: 'warning',
+      detail: remoteReady ? `${creativeDirector} configured; deterministic local fallback is available` : `${creativeDirector} unavailable; deterministic local fallback will be used`
     });
   }
 
   if (videoProvider === 'openart-mcp') {
     checks.push({
       name: 'OpenArt MCP configuration',
-      ok: aiProviderConfigured(env, aiProvider),
+      ok: safeBaseUrl(env.OPENART_MCP_URL || 'https://mcp.openart.ai/mcp'),
       severity: 'required',
-      detail: `${aiProvider} MCP bridge selected. OpenArt OAuth is resolved at worker startup from the encrypted durable credential store, with .env as a fallback.`
+      detail: 'Direct authenticated MCP selected. OpenArt OAuth is resolved from the encrypted durable credential store, with .env as a fallback; no AI bridge is required.'
     });
     checks.push({
       name: 'Paid generation lock',

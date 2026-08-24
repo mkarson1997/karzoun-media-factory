@@ -123,7 +123,11 @@ model ProductionJob {
   origin             JobOrigin           @default(MANUAL)
   provider           String              @default("mock")
   providerJobId      String?
+  creationId         String?
+  providerStatus     String?
+  providerMetadata   Json?
   requestedDuration  Int
+  actualDuration     Int?
   creativeBrief      Json?
   creativeModel      String?
   creativePreparedAt DateTime?
@@ -134,6 +138,11 @@ model ProductionJob {
   hashtags           String[]            @default([])
   failureReason      String?
   retryCount         Int                 @default(0)
+  generationAttempt  Int                 @default(0)
+  startedAt          DateTime?
+  lastPolledAt       DateTime?
+  nextPollAt         DateTime?
+  completedAt        DateTime?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   prompt             Prompt              @relation(fields: [promptId], references: [id], onDelete: Restrict)
@@ -144,6 +153,8 @@ model ProductionJob {
   analytics          AnalyticsSnapshot[]
 
   @@index([status, updatedAt])
+  @@index([status, nextPollAt])
+  @@index([provider, creationId])
   @@index([channelId, status])
   @@index([origin, createdAt])
 }

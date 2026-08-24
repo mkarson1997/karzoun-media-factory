@@ -1,437 +1,327 @@
-import Anthropic from '@anthropic-ai/sdk';
+import type { Tool } from '@modelcontextprotocol/client';
 import type { VideoGenerationProvider, VideoGenerationRequest, VideoGenerationResult } from './providers';
-import { getOpenArtAccessToken } from './openart-oauth';
-import { createOpenAIResponse, selectedOpenAIModel } from './openai-responses';
+import { DEFAULT_OPENART_MCP_URL, OpenArtMcpClient, type OpenArtToolResult } from './openart-mcp-client';
+import { hasDurableOpenArtOAuthCredential } from './openart-oauth';
 import { openSafeRemoteMedia } from './remote-media';
 
-const DEFAULT_OPENART_MCP_URL = 'https://mcp.openart.ai/mcp';
-const DEFAULT_GROQ_MCP_MODEL = 'qwen/qwen3.6-27b';
-const MEDIA_URL_RE = /https:\/\/[^\s"'<>]+/g;
-const WRITE_TOOL_RE = /(generate|generation|render|create|submit|execute|run|start|animate|upload|delete|update|edit)/i;
-const EXECUTION_TOOL_RE = /(generate|generation|render|video|submit|execute|run|start|animate|status|result|job|task|poll|wait)/i;
-
 type JsonRecord = Record<string, unknown>;
+type JsonSchema = JsonRecord & { type?: string; properties?: Record<string, JsonSchema>; required?: string[]; default?: unknown; enum?: unknown[]; const?: unknown; $ref?: string; allOf?: JsonSchema[]; anyOf?: JsonSchema[]; oneOf?: JsonSchema[]; $defs?: Record<string, JsonSchema>; minimum?: number; maximum?: number; maxLength?: number };
+type OpenArtModel = { id: string; displayName: string; description: string; modes: { video?: Array<{ mode: string; description?: string }> } };
+type ModelForm = { model: string; mode: string; media?: string; jsonSchema: JsonSchema; defaults?: JsonRecord };
+type CostRow = { model: string; mode: string; totalCredits?: number; config?: JsonRecord };
 
-function selectedAiProvider() {
-  return process.env.AI_PROVIDER || (process.env.GROQ_API_KEY ? 'groq' : process.env.OPENAI_API_KEY ? 'openai' : 'anthropic');
+export type OpenArtModelSelection = { model: OpenArtModel; mode: string; form: ModelForm; params: JsonRecord; actualDuration: number; estimatedCredits: number | null };
+export type OpenArtResultFacts = { status: string; identifiers: Record<string, string>; urls: string[]; pollAfterSeconds: number | null; error: string | null; raw: unknown };
+
+const CACHE_MS = 10 * 60_000;
+const REQUIRED_TOOLS = ['openart_generate_video', 'openart_creation_get', 'openart_model_list', 'openart_model_form_get'] as const;
+const IDENTIFIER_KEYS = /^(historyId|creationId|jobId|projectId|modelId|taskId|id)$/i;
+const STATUS_KEYS = /^(status|state|providerStatus)$/i;
+const URL_KEYS = /^(url|uri|download_?url|media_?url|file_?url|video_?url)$/i;
+const CONTAINER_KEYS = /^(content|structuredContent|result|data|output|outputs|media|asset|assets|video|videos|resource|resources)$/i;
+const MEDIA_URL_RE = /https:\/\/[^\s"'<>\\]+/g;
+const REJECTED_URL_RE = /(?:docs?|documentation|dashboard|auth|oauth|login|model(?:s)?(?:\/|\?|$)|\/mcp(?:\/|\?|$))/i;
+
+let sharedClient: OpenArtMcpClient | null = null;
+let toolCache: { expiresAt: number; tools: Tool[] } | null = null;
+let catalogCache: { expiresAt: number; models: OpenArtModel[]; costs: CostRow[] } | null = null;
+const formCache = new Map<string, { expiresAt: number; form: ModelForm }>();
+
+function client() { sharedClient ??= new OpenArtMcpClient(); return sharedClient; }
+function isRecord(value: unknown): value is JsonRecord { return Boolean(value && typeof value === 'object' && !Array.isArray(value)); }
+
+function parseJsonText(value: string): unknown | null {
+  const trimmed = value.trim();
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return null;
+  try { return JSON.parse(trimmed); } catch { return null; }
 }
 
-async function requireOpenArtConfig() {
-  const url = process.env.OPENART_MCP_URL || DEFAULT_OPENART_MCP_URL;
-  const allowPaid = process.env.ALLOW_PAID_GENERATION === 'true';
-  const aiProvider = selectedAiProvider();
-
-  if (!allowPaid) throw new Error('Paid generation is locked. Set ALLOW_PAID_GENERATION=true only when you intentionally want to spend provider credits');
-  if (aiProvider === 'groq' && !process.env.GROQ_API_KEY) throw new Error('OpenArt MCP via Groq requires GROQ_API_KEY');
-  if (aiProvider === 'openai' && !process.env.OPENAI_API_KEY) throw new Error('OpenArt MCP via OpenAI requires OPENAI_API_KEY');
-  if (aiProvider === 'anthropic' && (!process.env.ANTHROPIC_API_KEY || !process.env.ANTHROPIC_MODEL)) throw new Error('OpenArt MCP via Anthropic requires ANTHROPIC_API_KEY and ANTHROPIC_MODEL');
-  if (!['groq', 'openai', 'anthropic'].includes(aiProvider)) throw new Error(`Unsupported AI bridge: ${aiProvider}`);
-  if (!url.startsWith('https://')) throw new Error('OpenArt MCP URL must use HTTPS');
-
-  const token = await getOpenArtAccessToken();
-  if (!token) throw new Error('OpenArt MCP generation requires an OAuth credential. Import the MCP Inspector OAuth state or configure an access token');
-
-  return { aiProvider, token, url };
-}
-
-function collectUrls(value: unknown, found = new Set<string>()): string[] {
-  if (typeof value === 'string') {
-    for (const match of value.match(MEDIA_URL_RE) ?? []) found.add(match.replace(/[),.;]+$/, ''));
-    return [...found];
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectUrls(item, found);
-    return [...found];
-  }
-  if (value && typeof value === 'object') {
-    for (const item of Object.values(value as JsonRecord)) collectUrls(item, found);
-  }
-  return [...found];
-}
-
-function responseOutput(payload: unknown) {
-  if (!payload || typeof payload !== 'object') return [] as JsonRecord[];
-  const output = (payload as JsonRecord).output;
-  if (!Array.isArray(output)) return [] as JsonRecord[];
-  return output.filter((item): item is JsonRecord => Boolean(item && typeof item === 'object'));
-}
-
-function getMcpCalls(payload: unknown) {
-  return responseOutput(payload).filter((item) => item.type === 'mcp_call');
-}
-
-function getMcpListedTools(payload: unknown) {
-  const tools: JsonRecord[] = [];
-  for (const item of responseOutput(payload)) {
-    if (item.type !== 'mcp_list_tools' || !Array.isArray(item.tools)) continue;
-    for (const tool of item.tools) {
-      if (tool && typeof tool === 'object') tools.push(tool as JsonRecord);
+function payloadRoots(value: unknown) {
+  const roots: unknown[] = [value];
+  const seen = new Set<unknown>();
+  for (let index = 0; index < roots.length; index++) {
+    const current = roots[index];
+    if (seen.has(current)) continue;
+    seen.add(current);
+    if (typeof current === 'string') {
+      const parsed = parseJsonText(current);
+      if (parsed !== null) roots.push(parsed);
+    } else if (Array.isArray(current)) roots.push(...current);
+    else if (isRecord(current)) {
+      for (const [key, nested] of Object.entries(current)) if (CONTAINER_KEYS.test(key) || key === 'text') roots.push(nested);
     }
   }
+  return roots;
+}
+
+function firstRecordWith(value: unknown, key: string) {
+  return payloadRoots(value).find((item) => isRecord(item) && key in item) as JsonRecord | undefined;
+}
+
+function collectCostRows(value: unknown, rows: CostRow[] = [], seen = new Set<unknown>()): CostRow[] {
+  if (seen.has(value)) return rows;
+  if (value && typeof value === 'object') seen.add(value);
+  if (typeof value === 'string') {
+    const parsed = parseJsonText(value);
+    if (parsed !== null) collectCostRows(parsed, rows, seen);
+  } else if (Array.isArray(value)) {
+    for (const item of value) collectCostRows(item, rows, seen);
+  } else if (isRecord(value)) {
+    if (typeof value.model === 'string' && typeof value.mode === 'string' && typeof value.totalCredits === 'number') rows.push(value as CostRow);
+    for (const nested of Object.values(value)) collectCostRows(nested, rows, seen);
+  }
+  return rows;
+}
+
+function sanitizeProviderError(value: unknown) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return text.replace(/(?:sk-|gsk_|Bearer\s+)[A-Za-z0-9._-]+/gi, '[redacted]').replace(/https?:\/\/[^\s]+(?:token|oauth)[^\s]*/gi, '[redacted-url]').slice(0, 500);
+}
+
+export function extractOpenArtResultFacts(result: unknown): OpenArtResultFacts {
+  const identifiers: Record<string, string> = {};
+  const urls = new Set<string>();
+  let status = 'UNKNOWN';
+  let pollAfterSeconds: number | null = null;
+  let error: string | null = null;
+  const visited = new Set<unknown>();
+  const visit = (value: unknown, parentKey = '') => {
+    if (visited.has(value)) return;
+    if (value && typeof value === 'object') visited.add(value);
+    if (typeof value === 'string') {
+      const parsed = parseJsonText(value);
+      if (parsed !== null) visit(parsed, parentKey);
+      for (const match of value.match(MEDIA_URL_RE) ?? []) {
+        const candidate = match.replace(/[),.;\]}]+$/, '');
+        if (isPlausibleMediaUrl(candidate, parentKey)) urls.add(candidate);
+      }
+      return;
+    }
+    if (Array.isArray(value)) { for (const item of value) visit(item, parentKey); return; }
+    if (!isRecord(value)) return;
+    for (const [key, nested] of Object.entries(value)) {
+      if (IDENTIFIER_KEYS.test(key) && (typeof nested === 'string' || typeof nested === 'number')) identifiers[key] = String(nested);
+      if (STATUS_KEYS.test(key) && typeof nested === 'string') status = nested.toUpperCase();
+      if (/^pollAfterSeconds$/i.test(key) && typeof nested === 'number') pollAfterSeconds = nested;
+      if (/^(error|errorMessage|failureReason|message)$/i.test(key) && typeof nested === 'string' && /fail|error|cancel|invalid/i.test(`${status} ${key} ${nested}`)) error = sanitizeProviderError(nested);
+      if ((URL_KEYS.test(key) || CONTAINER_KEYS.test(key)) && typeof nested === 'string' && isPlausibleMediaUrl(nested, key)) urls.add(nested);
+      visit(nested, key);
+    }
+  };
+  visit(result);
+  return { status, identifiers, urls: [...urls], pollAfterSeconds, error, raw: result };
+}
+
+export function extractCreationId(result: unknown) {
+  const ids = extractOpenArtResultFacts(result).identifiers;
+  return ids.historyId || ids.creationId || ids.jobId || ids.taskId || null;
+}
+
+export function isPlausibleMediaUrl(raw: string, key = '') {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' || url.username || url.password) return false;
+    if (REJECTED_URL_RE.test(`${url.hostname}${url.pathname}`)) return false;
+    if (/\.(mp4|webm|mov|m4v)(?:$|\?)/i.test(raw)) return true;
+    return URL_KEYS.test(key) || /(?:cdn|media|asset|output|download|storage|video)/i.test(`${url.hostname}${url.pathname}`);
+  } catch { return false; }
+}
+
+export async function validateOpenArtMediaUrl(candidates: string[]) {
+  let lastError = 'no candidate URL';
+  for (const candidate of candidates) {
+    try {
+      const media = await openSafeRemoteMedia(candidate);
+      if (media.contentLength !== null && media.contentLength < 1024) { media.stream.destroy(); throw new Error('asset is too small'); }
+      media.stream.destroy();
+      return media.finalUrl;
+    } catch (error) { lastError = error instanceof Error ? error.message : String(error); }
+  }
+  if (candidates.length) throw new Error(`OpenArt returned media candidates but none were accessible: ${lastError}`);
+  return null;
+}
+
+function assertToolResult(result: OpenArtToolResult, tool: string) {
+  if (result.isError) {
+    const facts = extractOpenArtResultFacts(result);
+    throw new Error(`${tool} failed: ${facts.error || sanitizeProviderError(result.content)}`);
+  }
+  return result;
+}
+
+function parseStructured<T>(result: OpenArtToolResult, expectedKey: string): T {
+  const record = firstRecordWith(result, expectedKey);
+  if (!record) throw new Error(`OpenArt response did not contain ${expectedKey}`);
+  return record as T;
+}
+
+export async function discoverOpenArtTools(options?: { force?: boolean; mcpClient?: OpenArtMcpClient }) {
+  if (!options?.force && toolCache && toolCache.expiresAt > Date.now()) return toolCache.tools;
+  const tools = await (options?.mcpClient || client()).listTools();
+  toolCache = { tools, expiresAt: Date.now() + CACHE_MS };
   return tools;
 }
 
-function getResponseMessages(payload: unknown) {
-  return responseOutput(payload).filter((item) => item.type === 'message');
+export function validateOpenArtToolDiscovery(tools: Array<{ name: string }>) {
+  const names = new Set(tools.map((tool) => tool.name));
+  const missing = REQUIRED_TOOLS.filter((name) => !names.has(name));
+  if (missing.length) throw new Error(`OpenArt MCP is missing required tools: ${missing.join(', ')}`);
+  return { names: [...names], generationTool: 'openart_generate_video' };
 }
 
-function getResponseStatus(payload: unknown) {
-  if (!payload || typeof payload !== 'object') return 'unknown';
-  const status = (payload as JsonRecord).status;
-  return typeof status === 'string' ? status : 'unknown';
+async function loadCatalog(mcpClient = client(), force = false) {
+  if (!force && catalogCache && catalogCache.expiresAt > Date.now()) return catalogCache;
+  validateOpenArtToolDiscovery(await discoverOpenArtTools({ force, mcpClient }));
+  const [modelResult, costResult] = await Promise.all([mcpClient.callTool('openart_model_list', {}), mcpClient.callTool('openart_model_cost', {}).catch(() => null)]);
+  const models = parseStructured<{ models: OpenArtModel[] }>(assertToolResult(modelResult, 'openart_model_list'), 'models').models;
+  const costs = costResult && !costResult.isError ? collectCostRows(costResult) : [];
+  catalogCache = { models, costs, expiresAt: Date.now() + CACHE_MS };
+  return catalogCache;
 }
 
-function getIncompleteDetail(payload: unknown) {
-  if (!payload || typeof payload !== 'object') return null;
-  const details = (payload as JsonRecord).incomplete_details;
-  if (!details || typeof details !== 'object') return null;
-  const record = details as JsonRecord;
-  const reason = record.reason;
-  return typeof reason === 'string' ? reason : JSON.stringify(details).slice(0, 180);
+async function loadForm(model: string, mode: string, mcpClient = client(), force = false) {
+  const key = `${model}:${mode}`;
+  const cached = formCache.get(key);
+  if (!force && cached && cached.expiresAt > Date.now()) return cached.form;
+  const result = assertToolResult(await mcpClient.callTool('openart_model_form_get', { model, mode }), 'openart_model_form_get');
+  const form = parseStructured<ModelForm>(result, 'jsonSchema');
+  formCache.set(key, { form, expiresAt: Date.now() + CACHE_MS });
+  return form;
 }
 
-function mcpCallNames(calls: JsonRecord[]) {
-  return [...new Set(calls.map((call) => typeof call.name === 'string' ? call.name : null).filter((name): name is string => Boolean(name)))];
+function resolveSchema(schema: JsonSchema, root: JsonSchema): JsonSchema {
+  if (!schema.$ref?.startsWith('#/$defs/')) return schema;
+  return root.$defs?.[schema.$ref.slice('#/$defs/'.length)] || schema;
+}
+function objectBranches(schema: JsonSchema) { const outer = schema.allOf?.[0] || schema; return outer.anyOf || outer.oneOf || [outer]; }
+function pickTextBranch(schema: JsonSchema) {
+  const branches = objectBranches(schema);
+  return branches.find((branch) => { const p = branch.properties || {}; return p.prompt && (!p.creationMode?.const || p.creationMode.const === 'text') && p.multiShot?.const !== true; }) || branches.find((branch) => branch.properties?.prompt) || branches[0];
+}
+function propertySchema(form: ModelForm, name: string) { const raw = pickTextBranch(form.jsonSchema).properties?.[name]; return raw ? resolveSchema(raw, form.jsonSchema) : undefined; }
+function allowedNumber(schema: JsonSchema | undefined, requested: number, fallback: number) { return Math.max(typeof schema?.minimum === 'number' ? schema.minimum : 1, Math.min(typeof schema?.maximum === 'number' ? schema.maximum : requested, Math.floor(requested || fallback))); }
+function defaultValue(schema: JsonSchema | undefined): unknown {
+  if (!schema) return undefined;
+  if (schema.const !== undefined) return schema.const;
+  if (schema.default !== undefined) return schema.default;
+  if (schema.enum?.length) return schema.enum[0];
+  if (schema.type === 'boolean') return false;
+  if (schema.type === 'integer' || schema.type === 'number') return schema.minimum ?? 0;
+  if (schema.type === 'string') return '';
+  if (schema.type === 'array') return [];
+  if (schema.type === 'object') return {};
+  return undefined;
 }
 
-function writeCapableMcpCalls(calls: JsonRecord[]) {
-  return calls.filter((call) => typeof call.name === 'string' && WRITE_TOOL_RE.test(call.name));
-}
-
-function callsAreReadOnly(calls: JsonRecord[]) {
-  return calls.length > 0 && writeCapableMcpCalls(calls).length === 0;
-}
-
-function collectUrlsFromMcpCalls(calls: JsonRecord[]) {
-  const found = new Set<string>();
-  for (const call of calls) {
-    collectUrls(call.output, found);
-    collectUrls(call.result, found);
-    collectUrls(call.content, found);
+function compactRenderPrompt(raw: string, maxLength = 5000) {
+  let value = raw;
+  const parsed = parseJsonText(raw);
+  if (isRecord(parsed)) {
+    const shots = Array.isArray(parsed.shots) ? parsed.shots : [];
+    value = [`Hook: ${String(parsed.hook || '')}`, `Story: ${String(parsed.script || '')}`, `Visual style: ${String(parsed.visualStyle || '')}`, `Audio: ${String(parsed.audioDirection || '')}`,
+      ...shots.map((shot, index) => isRecord(shot) ? `Shot ${index + 1}: ${String(shot.visualPrompt || '')}; camera ${String(shot.camera || '')}; narration ${String(shot.narration || '')}` : ''),
+      `Safety: ${Array.isArray(parsed.safetyNotes) ? parsed.safetyNotes.join('; ') : ''}`, 'Vertical 9:16. Original imagery only. No logos, celebrities, copyrighted characters, or copied creator footage.'].filter(Boolean).join('\n');
   }
-  return [...found];
+  return value.length <= maxLength ? value : value.slice(0, Math.max(1, maxLength - 1)).trimEnd();
 }
 
-function collectUrlsFromResponseMessages(payload: unknown) {
-  const found = new Set<string>();
-  for (const message of getResponseMessages(payload)) collectUrls(message.content, found);
-  return [...found];
-}
-
-function videoUrlCandidates(urls: string[], mcpServerUrl: string) {
-  const server = mcpServerUrl.replace(/\/$/, '');
-  const candidates = urls.filter((url) => {
-    const normalized = url.replace(/\/$/, '');
-    if (normalized === server) return false;
-    try {
-      const parsed = new URL(url);
-      if (parsed.pathname === '/mcp' || parsed.pathname.endsWith('/mcp')) return false;
-    } catch {
-      return false;
-    }
-    return true;
-  });
-
-  const direct = candidates.filter((url) => /\.(mp4|webm|mov)(?:\?|$)/i.test(url));
-  const likely = candidates.filter((url) => !direct.includes(url) && /(cdn|media|video|output|asset|download|generation)/i.test(url));
-  return [...direct, ...likely];
-}
-
-async function verifyPlayableVideoUrl(rawUrl: string) {
-  const media = await openSafeRemoteMedia(rawUrl);
-  if (media.contentLength !== null && media.contentLength < 1024) {
-    media.stream.destroy();
-    throw new Error('Remote video asset is too small to be a completed render');
+export function buildVideoParams(form: ModelForm, prompt: string, requestedDuration: number) {
+  const branch = pickTextBranch(form.jsonSchema);
+  const properties = branch.properties || {};
+  const duration = allowedNumber(propertySchema(form, 'duration'), requestedDuration, 5);
+  const params: JsonRecord = {};
+  for (const name of branch.required || []) {
+    const schema = propertySchema(form, name);
+    if (name === 'prompt') params[name] = compactRenderPrompt(prompt, schema?.maxLength || 5000);
+    else if (name === 'duration') params[name] = duration;
+    else if (name === 'aspectRatio') params[name] = schema?.enum?.includes('9:16') ? '9:16' : defaultValue(schema);
+    else if (name === 'videoCount') params[name] = 1;
+    else if (name === 'generateAudio' || name === 'generateSound') params[name] = false;
+    else if (name === 'seed') params[name] = -1;
+    else params[name] = defaultValue(schema);
   }
-  media.stream.destroy();
-  return media.finalUrl;
+  if ('autoEnhancePrompt' in properties) params.autoEnhancePrompt = false;
+  return { params, actualDuration: duration };
 }
 
-async function findPlayableVideoUrl(urls: string[], mcpServerUrl: string) {
-  const candidates = videoUrlCandidates(urls, mcpServerUrl);
-  let lastError: Error | null = null;
+function normalizeHint(value: string) { return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 
-  for (const candidate of candidates) {
-    try {
-      return await verifyPlayableVideoUrl(candidate);
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error('unknown media validation error');
-    }
-  }
-
-  if (!candidates.length) return null;
-  throw new Error(`OpenArt returned ${candidates.length} candidate media URL(s), but none were playable: ${lastError?.message || 'unknown media validation error'}`);
+export function rankOpenArtModelCandidates<T extends { model: { id: string }; hintMatch: boolean; vertical: number; durationFit: number; actualDuration: number; estimatedCredits: number | null }>(candidates: T[]) {
+  return [...candidates].sort((a, b) => Number(b.hintMatch) - Number(a.hintMatch) || b.vertical - a.vertical || b.durationFit - a.durationFit || b.actualDuration - a.actualDuration || (a.estimatedCredits ?? Number.MAX_SAFE_INTEGER) - (b.estimatedCredits ?? Number.MAX_SAFE_INTEGER) || a.model.id.localeCompare(b.model.id));
 }
 
-function renderPrompt(input: VideoGenerationRequest, modelHint: string, retry = false) {
-  const retryInstruction = retry
-    ? '\nRETRY: A prior safe attempt only read OpenArt metadata and did not start a render. Do not browse projects or repeat unnecessary discovery. Use the available generation tools now, start exactly one video render, then wait/poll as supported until the finished asset URL is returned.'
-    : '';
-
-  return `Create one finished OpenArt video for job ${input.jobId}.\nDuration: ${input.durationSeconds}s. Aspect: 9:16.\nModel preference: ${modelHint}\nBrief: ${input.prompt}\nUse only the OpenArt MCP tools exposed for this run. Do not list projects unless a tool explicitly requires a project id. Model discovery/form lookup is setup only. Start exactly one generation, then wait/poll as supported until completion. Return the direct finished video/download URL.${retryInstruction}`;
+export async function selectOpenArtVideoModel(input: { prompt: string; requestedDuration: number; hint?: string; mcpClient?: OpenArtMcpClient; force?: boolean }): Promise<OpenArtModelSelection> {
+  const mcpClient = input.mcpClient || client();
+  const catalog = await loadCatalog(mcpClient, input.force);
+  const candidates = catalog.models.filter((model) => model.modes.video?.some((mode) => mode.mode === 'text2video'));
+  if (!candidates.length) throw new Error('OpenArt currently exposes no text-to-video model');
+  const hint = normalizeHint(input.hint || '');
+  const evaluated = await Promise.all(candidates.map(async (model) => {
+    const mode = 'text2video';
+    const form = await loadForm(model.id, mode, mcpClient, input.force);
+    const built = buildVideoParams(form, input.prompt, input.requestedDuration);
+    const cost = catalog.costs.find((row) => row.model === model.id && row.mode === mode)?.totalCredits;
+    const normalized = normalizeHint(`${model.id} ${model.displayName}`);
+    return { model, mode, form, params: built.params, actualDuration: built.actualDuration, estimatedCredits: typeof cost === 'number' ? cost : null, hintMatch: Boolean(hint && (normalized.includes(hint) || hint.includes(normalizeHint(model.id)))), vertical: propertySchema(form, 'aspectRatio')?.enum?.includes('9:16') ? 1 : 0, durationFit: built.actualDuration >= input.requestedDuration ? 1 : 0 };
+  }));
+  return rankOpenArtModelCandidates(evaluated)[0];
 }
 
-const RENDER_SYSTEM = 'You operate OpenArt MCP for Karzoun Media Factory. Produce exactly one original vertical video. Be action-first and terse. Do not wander through projects or account data. Model/form discovery is setup only. Execute exactly one video-generation action, then completion/status checks as needed. Never claim success without a completed playable video asset URL. Avoid copyrighted characters, celebrities, logos, franchises, or copied creator footage.';
-
-function groqOutputBudget(attempt: number) {
-  const configured = Number(process.env.GROQ_MCP_MAX_OUTPUT_TOKENS);
-  if (Number.isFinite(configured) && configured >= 1800 && configured <= 6000) return Math.floor(configured);
-  return attempt > 1 ? 3000 : 2400;
+function nextStatus(facts: OpenArtResultFacts) {
+  if (/COMPLETED|SUCCEEDED|SUCCESS|DONE|READY/.test(facts.status)) return 'READY_FOR_REVIEW' as const;
+  if (/FAILED|ERROR|CANCELLED|CANCELED/.test(facts.status)) return 'FAILED' as const;
+  return 'GENERATING' as const;
 }
-
-function toolName(tool: JsonRecord) {
-  return typeof tool.name === 'string' ? tool.name : '';
-}
-
-function toolDescription(tool: JsonRecord) {
-  return typeof tool.description === 'string' ? tool.description : '';
-}
-
-function configuredAllowedTools(availableNames: Set<string>) {
-  const configured = process.env.OPENART_MCP_ALLOWED_TOOLS?.split(',').map((name) => name.trim()).filter(Boolean) ?? [];
-  if (!configured.length) return null;
-  const allowed = configured.filter((name) => availableNames.has(name));
-  if (!allowed.length) throw new Error(`OPENART_MCP_ALLOWED_TOOLS did not match the OpenArt MCP catalog. Available tools include: ${[...availableNames].slice(0, 20).join(', ')}`);
-  return allowed.slice(0, 12);
-}
-
-function selectExecutionTools(listedTools: JsonRecord[]) {
-  const names = new Set(listedTools.map(toolName).filter(Boolean));
-  const configured = configuredAllowedTools(names);
-  if (configured) return configured;
-
-  const scored = listedTools
-    .map((tool) => {
-      const name = toolName(tool);
-      const description = toolDescription(tool);
-      const text = `${name} ${description}`;
-      if (!name || /project|account|credit|billing|profile/i.test(name)) return { name, score: -1 };
-
-      let score = 0;
-      if (/(generate|generation|render)/i.test(text)) score += 120;
-      if (/(video|animate)/i.test(text)) score += 80;
-      if (/(submit|execute|run|start)/i.test(text)) score += 60;
-      if (/(status|result|job|task|poll|wait)/i.test(text)) score += 45;
-      if (name === 'openart_model_form_get') score += 35;
-      if (name === 'openart_model_list') score += 20;
-      if (/^openart_model_/i.test(name) && name !== 'openart_model_list' && name !== 'openart_model_form_get') score += 50;
-      return { name, score };
-    })
-    .filter((entry) => entry.name && entry.score > 0)
-    .sort((a, b) => b.score - a.score);
-
-  const selected = [...new Set(scored.map((entry) => entry.name))].slice(0, 8);
-  const hasExecutionCandidate = selected.some((name) => {
-    if (name === 'openart_model_list' || name === 'openart_model_form_get') return false;
-    return EXECUTION_TOOL_RE.test(name) || /^openart_model_/i.test(name);
-  });
-
-  if (!hasExecutionCandidate) {
-    throw new Error(`OpenArt MCP catalog exposed no identifiable generation tool. Catalog: ${[...names].slice(0, 30).join(', ')}`);
-  }
-
-  return selected;
-}
-
-function groqMcpTool(token: string, url: string, allowedTools?: string[]) {
-  return {
-    type: 'mcp',
-    server_label: 'openart',
-    server_description: 'OpenArt image/video production tools. Use generation tools directly; project browsing is not needed for this job.',
-    server_url: url,
-    headers: { Authorization: `Bearer ${token}` },
-    require_approval: 'never',
-    ...(allowedTools?.length ? { allowed_tools: allowedTools } : {})
-  };
-}
-
-async function discoverGroqExecutionTools(model: string, token: string, url: string) {
-  const response = await createOpenAIResponse({
-    model,
-    max_output_tokens: 180,
-    instructions: 'Inspect the connected OpenArt MCP catalog only. Do not call any OpenArt tool and do not generate media. Reply with one short sentence.',
-    input: 'Catalog preflight only. Do not execute tools.',
-    tools: [groqMcpTool(token, url)],
-    tool_choice: 'none'
-  });
-
-  const listed = getMcpListedTools(response);
-  if (!listed.length) {
-    throw new Error('Groq connected to OpenArt MCP but did not return the MCP tool catalog during preflight. No OpenArt generation was started.');
-  }
-
-  const allowed = selectExecutionTools(listed);
-  console.info(`OpenArt MCP narrowed ${listed.length} discovered tool(s) to ${allowed.length} render tool(s): ${allowed.join(', ')}`);
-  return allowed;
-}
-
-async function generateViaOpenAICompatible(input: VideoGenerationRequest, token: string, url: string, modelHint: string) {
-  const groq = selectedAiProvider() === 'groq';
-  const model = groq
-    ? process.env.GROQ_MCP_MODEL || DEFAULT_GROQ_MCP_MODEL
-    : selectedOpenAIModel();
-
-  if (!groq) {
-    const response = await createOpenAIResponse({
-      model,
-      reasoning: { effort: process.env.OPENAI_REASONING_EFFORT || 'low' },
-      max_output_tokens: 2200,
-      instructions: RENDER_SYSTEM,
-      input: renderPrompt(input, modelHint),
-      tools: [{
-        type: 'mcp',
-        server_label: 'openart',
-        server_url: url,
-        authorization: token,
-        require_approval: 'never'
-      }],
-      tool_choice: 'required',
-      text: { verbosity: 'low' }
-    });
-    return { id: typeof response.id === 'string' ? response.id : `openai-${input.jobId}`, payload: response };
-  }
-
-  // Groq Free has an 8k TPM ceiling on the current MCP-capable models. Asking
-  // the model to ingest every OpenArt schema and complete a multi-step render in
-  // one shot exhausts that budget. First discover the catalog without executing
-  // a tool, then expose only the small generation/status subset for the paid run.
-  const allowedTools = await discoverGroqExecutionTools(model, token, url);
-  const mcpTool = groqMcpTool(token, url, allowedTools);
-  const attempts = 2;
-  let lastResponse: Record<string, unknown> | null = null;
-
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    const response = await createOpenAIResponse({
-      model,
-      max_output_tokens: groqOutputBudget(attempt),
-      instructions: RENDER_SYSTEM,
-      input: renderPrompt(input, modelHint, attempt > 1),
-      tools: [mcpTool],
-      max_tool_calls: 16,
-      temperature: 0.1
-    });
-    lastResponse = response;
-
-    const calls = getMcpCalls(response);
-    const writeCalls = writeCapableMcpCalls(calls);
-    const status = getResponseStatus(response);
-    const urls = writeCalls.length
-      ? [...new Set([
-          ...collectUrlsFromMcpCalls(writeCalls),
-          ...collectUrlsFromResponseMessages(response)
-        ])]
-      : [];
-
-    if (writeCalls.length > 0 && (urls.length > 0 || status === 'completed')) {
-      return { id: typeof response.id === 'string' ? response.id : `groq-${input.jobId}`, payload: response };
-    }
-
-    if (attempt < attempts && writeCalls.length === 0) {
-      const detail = getIncompleteDetail(response);
-      const names = mcpCallNames(calls);
-      console.warn(`Groq OpenArt MCP execution attempt ${attempt}/${attempts} stopped before a write action (${status}${detail ? `: ${detail}` : ''}; tools: ${names.join(', ') || 'none'}). Retrying safely.`);
-      continue;
-    }
-
-    return { id: typeof response.id === 'string' ? response.id : `groq-${input.jobId}`, payload: response };
-  }
-
-  return {
-    id: typeof lastResponse?.id === 'string' ? lastResponse.id : `groq-${input.jobId}`,
-    payload: lastResponse ?? {}
-  };
-}
-
-async function generateViaAnthropic(input: VideoGenerationRequest, token: string, url: string, modelHint: string) {
-  const model = process.env.ANTHROPIC_MODEL;
-  if (!model) throw new Error('ANTHROPIC_MODEL is missing');
-  const client = new Anthropic();
-  const message = await client.beta.messages.create({
-    model,
-    max_tokens: 1800,
-    betas: ['mcp-client-2025-11-20'],
-    mcp_servers: [{ type: 'url', url, name: 'openart', authorization_token: token }],
-    tools: [{ type: 'mcp_toolset', mcp_server_name: 'openart' }],
-    system: RENDER_SYSTEM,
-    messages: [{ role: 'user', content: renderPrompt(input, modelHint) }]
-  } as never);
-  return { id: message.id, payload: message };
+function metadataFor(facts: OpenArtResultFacts, extra?: JsonRecord) { return { ...extra, identifiers: facts.identifiers, providerStatus: facts.status, urlsFound: facts.urls.length }; }
+async function completedResult(providerJobId: string, facts: OpenArtResultFacts, metadata?: JsonRecord): Promise<VideoGenerationResult> {
+  const videoUrl = await validateOpenArtMediaUrl(facts.urls);
+  if (!videoUrl) throw new Error(`OpenArt creation ${providerJobId} completed without a usable media URL`);
+  return { providerJobId, status: 'READY_FOR_REVIEW', videoUrl, providerStatus: facts.status, providerMetadata: metadataFor(facts, metadata) };
 }
 
 export class OpenArtMcpVideoProvider implements VideoGenerationProvider {
   async generateVideo(input: VideoGenerationRequest): Promise<VideoGenerationResult> {
-    const { aiProvider, token, url } = await requireOpenArtConfig();
-    const modelHint = process.env.VIDEO_MODEL_HINT || 'Choose the best currently available OpenArt video model for this brief.';
-    const result = aiProvider === 'anthropic'
-      ? await generateViaAnthropic(input, token, url, modelHint)
-      : await generateViaOpenAICompatible(input, token, url, modelHint);
-
-    let urls: string[];
-    if (aiProvider === 'anthropic') {
-      urls = collectUrls(result.payload);
-    } else {
-      const mcpCalls = getMcpCalls(result.payload);
-      if (!mcpCalls.length) {
-        throw new Error(`OpenArt MCP via ${aiProvider} returned no MCP tool execution. The render was not started and no OpenArt credits should have been spent.`);
-      }
-
-      const writeCalls = writeCapableMcpCalls(mcpCalls);
-      if (!writeCalls.length) {
-        const names = mcpCallNames(mcpCalls);
-        const status = getResponseStatus(result.payload);
-        const detail = getIncompleteDetail(result.payload);
-        throw new Error(`OpenArt MCP via ${aiProvider} never executed a generation/write tool. Response status: ${status}.${detail ? ` Incomplete reason: ${detail}.` : ''} Tools: ${names.slice(0, 12).join(', ') || 'none'}. Metadata/example URLs are intentionally ignored, so no fake video can enter review.`);
-      }
-
-      urls = [...new Set([
-        ...collectUrlsFromMcpCalls(writeCalls),
-        ...collectUrlsFromResponseMessages(result.payload)
-      ])];
-
-      if (!urls.length) {
-        const names = mcpCallNames(writeCalls);
-        const status = getResponseStatus(result.payload);
-        const detail = getIncompleteDetail(result.payload);
-        const calls = names.length ? ` Tools: ${names.slice(0, 12).join(', ')}.` : '';
-        const incomplete = detail ? ` Incomplete reason: ${detail}.` : '';
-        throw new Error(`OpenArt MCP via ${aiProvider} executed ${writeCalls.length} write-capable MCP call(s) but returned no media URL. Response status: ${status}.${incomplete}${calls} Check OpenArt Media/Credits before retrying to avoid duplicate spending.`);
-      }
-    }
-
-    let videoUrl: string | null;
-    try {
-      videoUrl = await findPlayableVideoUrl(urls, url);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'unknown media validation error';
-      throw new Error(`OpenArt MCP media validation failed: ${reason}`);
-    }
-
-    if (!videoUrl) throw new Error(`OpenArt MCP via ${aiProvider} completed without a usable video asset URL`);
-
-    return { providerJobId: result.id, status: 'READY_FOR_REVIEW', videoUrl };
+    if (process.env.ALLOW_PAID_GENERATION !== 'true') throw new Error('Paid generation is locked');
+    const mcpClient = client();
+    const selection = await selectOpenArtVideoModel({ prompt: input.prompt, requestedDuration: input.durationSeconds, hint: process.env.VIDEO_MODEL_HINT, mcpClient });
+    console.info(`[JOB ${input.externalJobId || input.jobId}] OpenArt model selected: ${selection.model.id} (${selection.mode}, ${selection.actualDuration}s)`);
+    const result = assertToolResult(await mcpClient.callTool('openart_generate_video', { model: selection.model.id, mode: selection.mode, params: selection.params }, 90_000), 'openart_generate_video');
+    const facts = extractOpenArtResultFacts(result);
+    const providerJobId = extractCreationId(result);
+    if (!providerJobId) throw new Error('OpenArt accepted the generation call but returned no history/creation ID; automatic retry is disabled to prevent duplicate spending');
+    const metadata = { model: selection.model.id, modelName: selection.model.displayName, mode: selection.mode, actualDuration: selection.actualDuration, requestedDuration: input.durationSeconds, estimatedCredits: selection.estimatedCredits };
+    if (nextStatus(facts) === 'FAILED') throw new Error(facts.error || `OpenArt creation ${providerJobId} failed`);
+    if (nextStatus(facts) === 'READY_FOR_REVIEW') return { ...(await completedResult(providerJobId, facts, metadata)), actualDuration: selection.actualDuration };
+    return { providerJobId, status: 'GENERATING', providerStatus: facts.status, providerMetadata: metadataFor(facts, metadata), actualDuration: selection.actualDuration, nextPollSeconds: facts.pollAfterSeconds ?? 15 };
   }
 
   async getJobStatus(providerJobId: string): Promise<VideoGenerationResult> {
-    throw new Error(`OpenArt MCP job ${providerJobId} is not pollable by this adapter; generation is completed inside the MCP request`);
+    const mcpClient = client();
+    let result = assertToolResult(await mcpClient.callTool('openart_creation_get', { historyId: providerJobId }), 'openart_creation_get');
+    let facts = extractOpenArtResultFacts(result);
+    const state = nextStatus(facts);
+    if (state === 'FAILED') return { providerJobId, status: 'FAILED', providerStatus: facts.status, providerMetadata: metadataFor(facts), failureReason: facts.error || `OpenArt creation ended with ${facts.status}` };
+    if (state === 'READY_FOR_REVIEW' && !facts.urls.length) {
+      result = assertToolResult(await mcpClient.callTool('openart_creation_show', { historyId: providerJobId }), 'openart_creation_show');
+      facts = extractOpenArtResultFacts(result);
+    }
+    if (state === 'READY_FOR_REVIEW') return completedResult(providerJobId, facts);
+    return { providerJobId, status: 'GENERATING', providerStatus: facts.status, providerMetadata: metadataFor(facts), nextPollSeconds: facts.pollAfterSeconds ?? 15 };
   }
 
-  async cancelJob(): Promise<void> {
-    // The current adapter runs one bounded MCP request and has no provider-level cancel handle.
-  }
+  async cancelJob(): Promise<void> { throw new Error('OpenArt MCP does not expose a cancellation tool for this creation'); }
+}
+
+export async function preflightOpenArtMcp() {
+  const mcpClient = new OpenArtMcpClient();
+  try {
+    const tools = await discoverOpenArtTools({ force: true, mcpClient });
+    const discovery = validateOpenArtToolDiscovery(tools);
+    const selection = await selectOpenArtVideoModel({ prompt: 'Preflight schema validation only. Do not generate media.', requestedDuration: 30, hint: process.env.VIDEO_MODEL_HINT, mcpClient, force: true });
+    return { toolCount: tools.length, generationTool: discovery.generationTool, model: selection.model.id, actualDuration: selection.actualDuration, durableOAuth: await hasDurableOpenArtOAuthCredential() };
+  } finally { await mcpClient.close(); }
 }
 
 export function openArtMcpStatus() {
-  const aiProvider = selectedAiProvider();
-  const aiConfigured = aiProvider === 'groq'
-    ? Boolean(process.env.GROQ_API_KEY)
-    : aiProvider === 'openai'
-      ? Boolean(process.env.OPENAI_API_KEY)
-      : Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_MODEL);
-  return {
-    configured: aiConfigured && Boolean(process.env.OPENART_MCP_URL || DEFAULT_OPENART_MCP_URL),
-    aiProvider,
-    paidGenerationUnlocked: process.env.ALLOW_PAID_GENERATION === 'true',
-    serverUrl: process.env.OPENART_MCP_URL || DEFAULT_OPENART_MCP_URL,
-    modelHint: process.env.VIDEO_MODEL_HINT || null
-  };
+  return { configured: Boolean(process.env.OPENART_MCP_URL || DEFAULT_OPENART_MCP_URL), orchestration: 'direct-mcp' as const, paidGenerationUnlocked: process.env.ALLOW_PAID_GENERATION === 'true', serverUrl: process.env.OPENART_MCP_URL || DEFAULT_OPENART_MCP_URL, modelHint: process.env.VIDEO_MODEL_HINT || null };
 }

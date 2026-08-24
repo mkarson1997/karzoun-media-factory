@@ -25,12 +25,13 @@ describe('runtime readiness', () => {
     expect(checks.find((item) => item.name === 'Public publishing interlock')?.ok).toBe(false);
   });
 
-  it('rejects OpenArt MCP without the selected AI bridge credentials', () => {
+  it('does not require an AI bridge for direct OpenArt MCP', () => {
     const checks = evaluateRuntimeSafety({ ...base, VIDEO_PROVIDER: 'openart-mcp', AI_PROVIDER: 'openai' });
-    expect(readinessSummary(checks).ready).toBe(false);
+    expect(readinessSummary(checks).ready).toBe(true);
+    expect(checks.find((item) => item.name === 'OpenArt MCP configuration')?.detail).toMatch(/no AI bridge/i);
   });
 
-  it('accepts OpenAI as the creative director and OpenArt MCP bridge', () => {
+  it('accepts OpenAI as an optional creative director with direct OpenArt MCP', () => {
     const checks = evaluateRuntimeSafety({
       ...base,
       AI_PROVIDER: 'openai',

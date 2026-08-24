@@ -1,7 +1,8 @@
-import { JobStatus as PrismaJobStatus, ReviewDecisionType, ReviewSource, Visibility } from '@prisma/client';
+import { JobStatus as PrismaJobStatus, Prisma, ReviewDecisionType, ReviewSource, Visibility } from '@prisma/client';
 import { prisma } from './prisma';
 import { assertTransition, type JobStatus } from './job-state-machine';
 import { sendTelegramNotification } from './telegram-api';
+import { generationResetFields } from './generation-recovery';
 
 const PRODUCTION_QUEUE_LOCK_ID = 88440021;
 const PUBLISH_SCHEDULE_LOCK_ID = 88440031;
@@ -112,13 +113,18 @@ export async function transitionJob(jobId: string, to: JobStatus, options?: { ac
     const job = await tx.productionJob.findUnique({ where: { id: jobId }, include: { prompt: true } });
     if (!job) throw new Error('Production job not found');
 
+    const mockProvider = job.provider === 'mock' || job.provider === 'mock-demo';
+    if (to === 'READY_FOR_REVIEW' && !mockProvider && !job.videoUrl) throw new Error('A live job cannot enter review without an accessible provider media URL');
+
     assertTransition(job.status as JobStatus, to);
     const updated = await tx.productionJob.update({
       where: { id: job.id },
       data: {
         status: to as PrismaJobStatus,
         retryCount: to === 'QUEUED' && job.status === PrismaJobStatus.FAILED ? { increment: 1 } : undefined,
-        failureReason: to === 'QUEUED' ? null : undefined
+        failureReason: to === 'QUEUED' ? null : undefined,
+        ...(to === 'QUEUED' ? generationResetFields() : {}),
+        providerMetadata: to === 'QUEUED' ? Prisma.JsonNull : undefined,
       }
     });
 
@@ -162,7 +168,7 @@ export async function requestRegeneration(jobId: string, options?: { actor?: str
   return prisma.$transaction(async (tx) => {
     const job = await tx.productionJob.findUnique({ where: { id: jobId } });
     if (!job) throw new Error('Production job not found');
-    if (job.status !== PrismaJobStatus.READY_FOR_REVIEW && job.status !== PrismaJobStatus.REJECTED) throw new Error('Regeneration is only available for a review or rejected job');
+    if (job.status !== PrismaJobStatus.READY_FOR_REVIEW && job.status !== PrismaJobStatus.REJECTED && job.status !== PrismaJobStatus.FAILED) throw new Error('Regeneration is only available for a review, rejected, or failed job');
 
     if (job.status === PrismaJobStatus.READY_FOR_REVIEW) {
       assertTransition('READY_FOR_REVIEW', 'REJECTED');
@@ -175,11 +181,16 @@ export async function requestRegeneration(jobId: string, options?: { actor?: str
         }
       });
     }
-    assertTransition('REJECTED', 'QUEUED');
+    assertTransition(job.status === PrismaJobStatus.FAILED ? 'FAILED' : 'REJECTED', 'QUEUED');
 
     const updated = await tx.productionJob.update({
       where: { id: job.id },
-      data: { status: PrismaJobStatus.QUEUED, providerJobId: null, videoUrl: null, thumbnailUrl: null, failureReason: null, retryCount: { increment: 1 } }
+      data: {
+        status: PrismaJobStatus.QUEUED,
+        ...generationResetFields(),
+        providerMetadata: Prisma.JsonNull,
+        retryCount: { increment: 1 }
+      }
     });
     await tx.activityLog.create({ data: { actor, action: 'JOB_REGENERATION_REQUESTED', entityType: 'ProductionJob', entityId: job.id } });
     return updated;

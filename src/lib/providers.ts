@@ -2,6 +2,7 @@ import type { JobStatus } from './job-state-machine';
 
 export interface VideoGenerationRequest {
   jobId: string;
+  externalJobId?: string;
   prompt: string;
   durationSeconds: number;
 }
@@ -11,6 +12,11 @@ export interface VideoGenerationResult {
   status: JobStatus;
   videoUrl?: string;
   thumbnailUrl?: string;
+  providerStatus?: string;
+  providerMetadata?: Record<string, unknown>;
+  actualDuration?: number;
+  nextPollSeconds?: number;
+  failureReason?: string;
 }
 
 export interface VideoGenerationProvider {

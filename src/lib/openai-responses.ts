@@ -18,13 +18,11 @@ export function selectedResponsesProvider(env: NodeJS.ProcessEnv = process.env):
   return env.AI_PROVIDER === 'groq' ? 'groq' : 'openai';
 }
 
-export function responsesProviderConfigured(env: NodeJS.ProcessEnv = process.env) {
-  const provider = selectedResponsesProvider(env);
+export function responsesProviderConfigured(env: NodeJS.ProcessEnv = process.env, provider = selectedResponsesProvider(env)) {
   return provider === 'groq' ? Boolean(env.GROQ_API_KEY?.trim()) : Boolean(env.OPENAI_API_KEY?.trim());
 }
 
-function providerConfig() {
-  const provider = selectedResponsesProvider();
+function providerConfig(provider: ResponsesProvider) {
   if (provider === 'groq') {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) throw new Error('Groq provider requires GROQ_API_KEY');
@@ -113,10 +111,10 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function createOpenAIResponse(payload: OpenAIResponsePayload) {
-  const config = providerConfig();
+export async function createOpenAIResponse(payload: OpenAIResponsePayload, provider = selectedResponsesProvider(), options?: { maxAttempts?: number }) {
+  const config = providerConfig(provider);
   const normalizedPayload = normalizePayload(payload, config.provider);
-  const maxAttempts = config.provider === 'groq' ? 3 : 1;
+  const maxAttempts = options?.maxAttempts ?? (config.provider === 'groq' ? 3 : 1);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const response = await fetch(config.endpoint, {
@@ -170,8 +168,8 @@ export function getOpenAIOutputText(response: Record<string, unknown>) {
   return texts.join('\n').trim();
 }
 
-export function selectedOpenAIModel() {
-  return selectedResponsesProvider() === 'groq'
+export function selectedOpenAIModel(provider = selectedResponsesProvider()) {
+  return provider === 'groq'
     ? process.env.GROQ_MODEL || 'openai/gpt-oss-120b'
     : process.env.OPENAI_MODEL || 'gpt-5.6-terra';
 }
