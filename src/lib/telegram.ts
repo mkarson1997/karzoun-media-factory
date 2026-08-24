@@ -11,6 +11,17 @@ function telegramConfig() {
   return { token, allowedUserId, baseUrl };
 }
 
+function telegramPublicUrl(baseUrl: string, path: string) {
+  try {
+    const url = new URL(baseUrl);
+    const host = url.hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local')) return null;
+    return new URL(path, `${url.origin}/`).toString();
+  } catch {
+    return null;
+  }
+}
+
 function isAuthorized(ctx: Context, allowedUserId: string) {
   return String(ctx.from?.id ?? '') === allowedUserId;
 }
@@ -21,6 +32,15 @@ function shortConcept(value: string, max = 100) {
 
 function compact(value: number) {
   return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+}
+
+async function replyWithOptionalUrl(ctx: Context, text: string, baseUrl: string, label: string, path: string) {
+  const publicUrl = telegramPublicUrl(baseUrl, path);
+  if (publicUrl && 'reply' in ctx) {
+    await ctx.reply(text, Markup.inlineKeyboard([[Markup.button.url(label, publicUrl)]]));
+    return;
+  }
+  if ('reply' in ctx) await ctx.reply(`${text}\n\nDashboard link omitted because the factory is running on localhost.`);
 }
 
 async function setFactoryPause(productionPaused: boolean, publishingPaused: boolean, actor: string) {
@@ -71,9 +91,12 @@ export function createTelegramBot() {
   });
 
   bot.start(async (ctx) => {
-    await ctx.reply(
+    await replyWithOptionalUrl(
+      ctx,
       '🏭 Karzoun Media Factory is online.\n\n/status — factory counters\n/autopilot — automatic idea production\n/queue — latest jobs\n/review — videos waiting for review\n/schedule — next smart publish suggestion\n/analytics — latest performance\n/pause — stop generation + publishing\n/resume — resume factory\n/help — commands',
-      Markup.inlineKeyboard([[Markup.button.url('Open Dashboard', `${baseUrl}/dashboard`)]])
+      baseUrl,
+      'Open Dashboard',
+      '/dashboard'
     );
   });
 
@@ -87,7 +110,8 @@ export function createTelegramBot() {
       const production = settings?.productionPaused ? 'PAUSED' : 'RUNNING';
       const publishing = settings?.publishingPaused ? 'PAUSED' : 'RUNNING';
       await ctx.reply(`🏭 Factory status\n\nProduction: ${production}\nPublishing: ${publishing}\nAutopilot: ${autopilot.enabled ? 'ARMED' : 'OFF'}\n\nQueued: ${c.QUEUED}\nGenerating: ${c.GENERATING}\nReady for review: ${c.READY_FOR_REVIEW}\nApproved: ${c.APPROVED}\nScheduled: ${c.SCHEDULED}\nPublished: ${c.PUBLISHED}\nFailed: ${c.FAILED}`);
-    } catch {
+    } catch (error) {
+      console.error('Telegram /status failed:', error instanceof Error ? error.message : 'unknown error');
       await ctx.reply('Database is not ready yet.');
     }
   });
@@ -95,16 +119,17 @@ export function createTelegramBot() {
   bot.command('autopilot', async (ctx) => {
     try {
       const status = await getAutopilotStatus();
-      await ctx.reply(
-        autopilotText(status),
-        Markup.inlineKeyboard([
-          status.enabled
-            ? [Markup.button.callback('⏹ Disable autopilot', 'autopilot:disable')]
-            : [Markup.button.callback('🤖 Enable general autopilot', 'autopilot:enable')],
-          [Markup.button.callback('⚡ Queue next safe idea', 'autopilot:tick'), Markup.button.url('Autopilot settings', `${baseUrl}/settings`)]
-        ])
-      );
-    } catch {
+      const rows = [
+        status.enabled
+          ? [Markup.button.callback('⏹ Disable autopilot', 'autopilot:disable')]
+          : [Markup.button.callback('🤖 Enable general autopilot', 'autopilot:enable')],
+        [Markup.button.callback('⚡ Queue next safe idea', 'autopilot:tick')]
+      ];
+      const settingsUrl = telegramPublicUrl(baseUrl, '/settings');
+      if (settingsUrl) rows[1].push(Markup.button.url('Autopilot settings', settingsUrl));
+      await ctx.reply(autopilotText(status), Markup.inlineKeyboard(rows));
+    } catch (error) {
+      console.error('Telegram /autopilot failed:', error instanceof Error ? error.message : 'unknown error');
       await ctx.reply('Could not read autopilot status.');
     }
   });
@@ -112,8 +137,9 @@ export function createTelegramBot() {
   bot.command('pause', async (ctx) => {
     try {
       await setFactoryPause(true, true, `telegram:${allowedUserId}`);
-      await ctx.reply('⏸ Factory paused. No new generation or publishing will start. Analytics can still refresh.', Markup.inlineKeyboard([[Markup.button.url('Open Settings', `${baseUrl}/settings`)]]));
-    } catch {
+      await replyWithOptionalUrl(ctx, '⏸ Factory paused. No new generation or publishing will start. Analytics can still refresh.', baseUrl, 'Open Settings', '/settings');
+    } catch (error) {
+      console.error('Telegram /pause failed:', error instanceof Error ? error.message : 'unknown error');
       await ctx.reply('Could not pause the factory.');
     }
   });
@@ -122,7 +148,8 @@ export function createTelegramBot() {
     try {
       await setFactoryPause(false, false, `telegram:${allowedUserId}`);
       await ctx.reply('▶️ Factory resumed. Production and publishing workers may continue.');
-    } catch {
+    } catch (error) {
+      console.error('Telegram /resume failed:', error instanceof Error ? error.message : 'unknown error');
       await ctx.reply('Could not resume the factory.');
     }
   });
@@ -132,8 +159,9 @@ export function createTelegramBot() {
       const jobs = await listJobs({ take: 5 });
       if (!jobs.length) return void await ctx.reply('Queue is empty.');
       const text = jobs.map((job) => `${job.status} · ${job.prompt.externalPromptId}\n${shortConcept(job.prompt.concept, 80)}`).join('\n\n');
-      await ctx.reply(text, Markup.inlineKeyboard([[Markup.button.url('Open Queue', `${baseUrl}/queue`)]]));
-    } catch {
+      await replyWithOptionalUrl(ctx, text, baseUrl, 'Open Queue', '/queue');
+    } catch (error) {
+      console.error('Telegram /queue failed:', error instanceof Error ? error.message : 'unknown error');
       await ctx.reply('Could not read the queue.');
     }
   });
@@ -142,17 +170,21 @@ export function createTelegramBot() {
     try {
       const jobs = await listJobs({ status: 'READY_FOR_REVIEW', take: 5 });
       if (!jobs.length) return void await ctx.reply('Nothing is waiting for review.');
+      const reviewUrl = telegramPublicUrl(baseUrl, '/review');
       for (const job of jobs) {
+        const rows = [
+          [Markup.button.callback('✅ Approve + smart schedule', `approve-smart:${job.id}`)],
+          [Markup.button.callback('Approve only', `approve:${job.id}`), Markup.button.callback('🔄 Regenerate', `regenerate:${job.id}`)],
+          [Markup.button.callback('❌ Reject', `reject:${job.id}`)]
+        ];
+        if (reviewUrl) rows[2].push(Markup.button.url('▶ Open Review', reviewUrl));
         await ctx.reply(
-          `🎬 ${job.prompt.externalPromptId} · ${job.requestedDuration}s\n${shortConcept(job.prompt.concept)}\nProvider: ${job.provider}\nOrigin: ${job.origin}`,
-          Markup.inlineKeyboard([
-            [Markup.button.callback('✅ Approve + smart schedule', `approve-smart:${job.id}`)],
-            [Markup.button.callback('Approve only', `approve:${job.id}`), Markup.button.callback('🔄 Regenerate', `regenerate:${job.id}`)],
-            [Markup.button.callback('❌ Reject', `reject:${job.id}`), Markup.button.url('Open Review', `${baseUrl}/review`)]
-          ])
+          `🎬 ${job.prompt.externalPromptId} · ${job.requestedDuration}s\n${shortConcept(job.prompt.concept)}\nProvider: ${job.provider}\nOrigin: ${job.origin}${reviewUrl ? '' : '\n\nReview dashboard is local-only on the factory computer.'}`,
+          Markup.inlineKeyboard(rows)
         );
       }
-    } catch {
+    } catch (error) {
+      console.error('Telegram /review failed:', error instanceof Error ? error.message : 'unknown error');
       await ctx.reply('Could not load review jobs.');
     }
   });
@@ -161,19 +193,20 @@ export function createTelegramBot() {
     try {
       const jobs = await listJobs({ status: 'APPROVED', take: 5 });
       if (!jobs.length) {
-        await ctx.reply('No approved videos are waiting for scheduling.', Markup.inlineKeyboard([[Markup.button.url('Open Review', `${baseUrl}/review`)]]));
+        await replyWithOptionalUrl(ctx, 'No approved videos are waiting for scheduling.', baseUrl, 'Open Review', '/review');
         return;
       }
       const job = jobs[0];
       const suggestion = await getSmartPublishSuggestion(job.id);
+      const rows = [[Markup.button.callback('✅ Schedule this slot', `schedule-smart:${job.id}`)]];
+      const scheduleUrl = telegramPublicUrl(baseUrl, `/schedule?job=${job.id}`);
+      if (scheduleUrl) rows.push([Markup.button.url('Open Schedule', scheduleUrl)]);
       await ctx.reply(
         `🗓 Smart publish suggestion\n\n${job.prompt.externalPromptId}\n${shortConcept(job.prompt.concept, 80)}\n\nTime: ${suggestion.localLabel}\nTimezone: ${suggestion.timezone}\nSource: ${suggestion.source}\n\n${suggestion.reason}`,
-        Markup.inlineKeyboard([
-          [Markup.button.callback('✅ Schedule this slot', `schedule-smart:${job.id}`)],
-          [Markup.button.url('Open Schedule', `${baseUrl}/schedule?job=${job.id}`)]
-        ])
+        Markup.inlineKeyboard(rows)
       );
-    } catch {
+    } catch (error) {
+      console.error('Telegram /schedule failed:', error instanceof Error ? error.message : 'unknown error');
       await ctx.reply('Could not calculate a smart publishing slot.');
     }
   });
@@ -189,7 +222,7 @@ export function createTelegramBot() {
       for (const item of snapshots) if (!latest.has(item.jobId)) latest.set(item.jobId, item);
       const videos = [...latest.values()];
       if (!videos.length) {
-        await ctx.reply('📊 No real YouTube analytics yet.', Markup.inlineKeyboard([[Markup.button.url('Open Analytics', `${baseUrl}/analytics`)]]));
+        await replyWithOptionalUrl(ctx, '📊 No real YouTube analytics yet.', baseUrl, 'Open Analytics', '/analytics');
         return;
       }
 
@@ -197,11 +230,15 @@ export function createTelegramBot() {
       const totalSubs = videos.reduce((sum, item) => sum + item.subscribersGained, 0);
       const winners = videos.sort((a, b) => (b.performanceScore ?? 0) - (a.performanceScore ?? 0)).slice(0, 3);
       const winnerText = winners.map((item, index) => `${index + 1}. ${item.job.prompt.externalPromptId} · ${item.performanceScore?.toFixed(1) ?? '—'} score · ${compact(item.views)} views`).join('\n');
-      await ctx.reply(
+      await replyWithOptionalUrl(
+        ctx,
         `📊 Factory analytics\n\nVideos tracked: ${videos.length}\nViews: ${compact(totalViews)}\nSubscribers gained: ${compact(totalSubs)}\n\nTop performers\n${winnerText}`,
-        Markup.inlineKeyboard([[Markup.button.url('Open Analytics', `${baseUrl}/analytics`)]])
+        baseUrl,
+        'Open Analytics',
+        '/analytics'
       );
-    } catch {
+    } catch (error) {
+      console.error('Telegram /analytics failed:', error instanceof Error ? error.message : 'unknown error');
       await ctx.reply('Could not load analytics.');
     }
   });
