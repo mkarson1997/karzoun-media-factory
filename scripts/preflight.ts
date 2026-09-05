@@ -8,6 +8,7 @@ import { constants } from 'node:fs';
 import { promisify } from 'node:util';
 import { localMediaRoot } from '../src/lib/local-media';
 import { isLocalOllamaModel, type OllamaModelInfo } from '../src/lib/creative-director';
+import { trustedOllamaUrl } from '../src/lib/ollama-network-policy';
 
 const execFileAsync = promisify(execFile);
 
@@ -49,15 +50,14 @@ async function main() {
       checks.push({ name: 'Persistent media storage', level: 'FAIL', detail: error instanceof Error ? error.message.slice(0, 160) : 'unavailable' });
     }
     try {
-      const base = (process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434').replace(/\/$/, '');
-      const response = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(5000) });
+      const response = await fetch(trustedOllamaUrl('/api/tags', process.env.OLLAMA_BASE_URL), { signal: AbortSignal.timeout(5000) });
       const payload = response.ok ? await response.json() as { models?: OllamaModelInfo[] } : null;
       const models = payload?.models?.filter(isLocalOllamaModel).map((item) => item.name || item.model).filter(Boolean) ?? [];
       const configured = process.env.OLLAMA_MODEL?.trim();
       const selected = configured && models.includes(configured) ? configured : models[0];
       checks.push({ name: 'Ollama / fallback', level: 'PASS', detail: selected ? `local model ready: ${selected}` : 'No local generation model available; deterministic fallback ready' });
     } catch {
-      checks.push({ name: 'Ollama / fallback', level: 'PASS', detail: 'Ollama unavailable; deterministic fallback ready' });
+      checks.push({ name: 'Ollama / fallback', level: 'PASS', detail: 'Ollama unavailable or endpoint rejected; deterministic fallback ready' });
     }
     checks.push({ name: 'OpenArt MCP', level: 'PASS', detail: 'disabled; no MCP/OAuth request made in zero-cost mode' });
   } else if ((process.env.VIDEO_PROVIDER || 'mock') === 'openart-mcp') {
