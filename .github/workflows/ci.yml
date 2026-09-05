@@ -35,11 +35,17 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Prepare ephemeral build configuration
+        shell: bash
+        run: |
+          APP_SECRET_VALUE="$(openssl rand -hex 32)"
+          DB_PASSWORD="$(openssl rand -hex 24)"
+          echo "APP_SECRET=$APP_SECRET_VALUE" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=postgresql://kmf:$DB_PASSWORD@127.0.0.1:5432/kmf?schema=public" >> "$GITHUB_ENV"
+
       - name: Build
         run: npm run build
         env:
-          DATABASE_URL: postgresql://kmf:ci-only@127.0.0.1:5432/kmf?schema=public
-          APP_SECRET: ci-only-not-for-production
           ZERO_COST_MODE: 'true'
           VIDEO_PROVIDER: local-demo
           PUBLISHING_PROVIDER: mock
