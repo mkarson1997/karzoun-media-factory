@@ -1,9 +1,10 @@
-const DEFAULT_OLLAMA_BASE_URL = 'http://host.docker.internal:11434';
-const LOCAL_OLLAMA_HOSTS = new Map<string, string>([
-  ['localhost', 'localhost'],
-  ['127.0.0.1', '127.0.0.1'],
-  ['[::1]', '[::1]'],
-  ['host.docker.internal', 'host.docker.internal']
+export const DEFAULT_OLLAMA_BASE_URL = 'http://host.docker.internal:11434';
+
+const TRUSTED_OLLAMA_ORIGINS = new Map<string, string>([
+  ['http://localhost:11434', 'http://localhost:11434'],
+  ['http://127.0.0.1:11434', 'http://127.0.0.1:11434'],
+  ['http://[::1]:11434', 'http://[::1]:11434'],
+  ['http://host.docker.internal:11434', 'http://host.docker.internal:11434']
 ]);
 
 export function trustedOllamaBaseUrl(raw = DEFAULT_OLLAMA_BASE_URL) {
@@ -14,9 +15,6 @@ export function trustedOllamaBaseUrl(raw = DEFAULT_OLLAMA_BASE_URL) {
     throw new Error('OLLAMA_BASE_URL must be a valid local URL');
   }
 
-  if (parsed.protocol !== 'http:') {
-    throw new Error('OLLAMA_BASE_URL must use local HTTP');
-  }
   if (parsed.username || parsed.password) {
     throw new Error('OLLAMA_BASE_URL cannot contain credentials');
   }
@@ -24,22 +22,15 @@ export function trustedOllamaBaseUrl(raw = DEFAULT_OLLAMA_BASE_URL) {
     throw new Error('OLLAMA_BASE_URL must contain only a local origin');
   }
 
-  const host = parsed.hostname.toLowerCase();
-  const canonicalHost = LOCAL_OLLAMA_HOSTS.get(host);
-  if (!canonicalHost) {
-    throw new Error('OLLAMA_BASE_URL must use localhost, loopback, or host.docker.internal');
+  const trusted = TRUSTED_OLLAMA_ORIGINS.get(parsed.origin.toLowerCase());
+  if (!trusted) {
+    throw new Error('OLLAMA_BASE_URL must use the standard Ollama port on localhost, loopback, or host.docker.internal');
   }
-
-  const port = parsed.port ? Number(parsed.port) : 11434;
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error('OLLAMA_BASE_URL contains an invalid port');
-  }
-
-  return `http://${canonicalHost}:${port}`;
+  return trusted;
 }
 
 export function trustedOllamaUrl(pathname: '/api/tags' | '/api/generate', raw?: string) {
-  return new URL(pathname, `${trustedOllamaBaseUrl(raw)}/`);
+  const base = trustedOllamaBaseUrl(raw);
+  if (pathname === '/api/tags') return new URL('/api/tags', `${base}/`);
+  return new URL('/api/generate', `${base}/`);
 }
-
-export { DEFAULT_OLLAMA_BASE_URL };
