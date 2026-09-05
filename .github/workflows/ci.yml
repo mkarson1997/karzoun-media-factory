@@ -72,9 +72,9 @@ jobs:
             return vulnerabilityDescriptions.has(description);
           });
 
-          console.log(`SONARJS_VULNERABILITY_RULES=${selected.length}`);
+          console.error(`SONARJS_VULNERABILITY_RULES=${selected.length}`);
           for (const [name, rule] of selected) {
-            console.log(`SONARJS_RULE ${name} :: ${rule.meta.docs.description}`);
+            console.error(`SONARJS_RULE ${name} :: ${rule.meta.docs.description}`);
           }
 
           const rules = Object.fromEntries(selected.map(([name]) => [`sonarjs/${name}`, 'error']));
