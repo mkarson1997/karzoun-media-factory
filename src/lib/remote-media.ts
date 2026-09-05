@@ -29,12 +29,16 @@ function blockedIp(address: string) {
   return true;
 }
 
-function allowedHost(hostname: string) {
-  const configured = (process.env.REMOTE_MEDIA_ALLOWED_HOSTS || '')
+function configuredAllowedHosts() {
+  return (process.env.REMOTE_MEDIA_ALLOWED_HOSTS || '')
     .split(',')
     .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
-  if (!configured.length) return true;
+    .filter((value) => Boolean(value) && !value.includes('/') && !value.includes(':'));
+}
+
+function allowedHost(hostname: string) {
+  const configured = configuredAllowedHosts();
+  if (!configured.length) return false;
   const host = hostname.toLowerCase();
   return configured.some((entry) => host === entry || host.endsWith(`.${entry}`));
 }
@@ -45,6 +49,7 @@ async function validateRemoteUrl(raw: string) {
   if (url.username || url.password) throw new Error('Remote media URL cannot contain credentials');
   if (url.port && url.port !== '443') throw new Error('Remote media URL cannot use a custom port');
   if (url.hostname === 'localhost' || url.hostname.endsWith('.local')) throw new Error('Local media hosts are not allowed');
+  if (!configuredAllowedHosts().length) throw new Error('REMOTE_MEDIA_ALLOWED_HOSTS must explicitly allow trusted media hosts');
   if (!allowedHost(url.hostname)) throw new Error('Remote media host is not in REMOTE_MEDIA_ALLOWED_HOSTS');
 
   const addresses = await dns.lookup(url.hostname, { all: true, verbatim: true });
@@ -71,7 +76,11 @@ export async function openSafeRemoteMedia(rawUrl: string) {
   let current = await validateRemoteUrl(rawUrl);
 
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
-    const response = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(60_000) });
+    const response = await fetch(current, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(60_000),
+      headers: { 'user-agent': 'Karzoun-Media-Factory/1.0' }
+    });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get('location');
       if (!location) throw new Error('Remote media redirect had no location');
@@ -85,7 +94,9 @@ export async function openSafeRemoteMedia(rawUrl: string) {
       throw new Error(`Remote media returned unsupported content type: ${contentType || 'unknown'}`);
     }
     const declaredLength = Number(response.headers.get('content-length') ?? '0');
-    if (declaredLength && declaredLength > MAX_MEDIA_BYTES) throw new Error('Remote media exceeds the 1 GB safety limit');
+    if (declaredLength && (!Number.isFinite(declaredLength) || declaredLength < 0 || declaredLength > MAX_MEDIA_BYTES)) {
+      throw new Error('Remote media has an invalid or oversized content length');
+    }
 
     return {
       stream: sizeLimitedStream(response.body as ReadableStream<Uint8Array>),
