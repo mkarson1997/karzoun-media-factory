@@ -15,36 +15,44 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Wait for automatic Sonar analysis
-        run: sleep 45
+        run: sleep 35
 
-      - name: Print unresolved security-impact metadata
+      - name: Print public Sonar quality metadata
         shell: bash
         run: |
           set -euo pipefail
-          URL='https://sonarcloud.io/api/issues/search?componentKeys=mkarson1997_karzoun-media-factory&resolved=false&ps=500'
-          curl --fail --silent --show-error "$URL" -o sonar.json
+          PROJECT='mkarson1997_karzoun-media-factory'
+          curl --fail --silent --show-error "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$PROJECT&branch=main" -o gate.json
+          curl --fail --silent --show-error "https://sonarcloud.io/api/measures/component?component=$PROJECT&metricKeys=security_rating,new_security_rating,vulnerabilities,new_vulnerabilities,security_hotspots,new_security_hotspots,security_review_rating,new_security_review_rating" -o measures.json
+          curl --fail --silent --show-error "https://sonarcloud.io/api/hotspots/search?projectKey=$PROJECT&status=TO_REVIEW&ps=100" -o hotspots.json
           python3 - <<'PY'
           import json
-          with open('sonar.json', encoding='utf-8') as f:
-              data = json.load(f)
-          all_issues = data.get('issues', [])
-          security = []
-          for item in all_issues:
-              impacts = item.get('impacts') or []
-              if item.get('type') == 'VULNERABILITY' or any(
-                  str(impact.get('softwareQuality', '')).upper() == 'SECURITY'
-                  for impact in impacts if isinstance(impact, dict)
-              ):
-                  security.append(item)
-          print(f'unresolved_total={len(all_issues)}')
-          print(f'unresolved_security_impacts={len(security)}')
-          for item in security:
-              print('---')
-              print('key=' + str(item.get('key')))
-              print('rule=' + str(item.get('rule')))
-              print('severity=' + str(item.get('severity')))
-              print('impacts=' + json.dumps(item.get('impacts'), sort_keys=True))
-              print('component=' + str(item.get('component')))
-              print('line=' + str(item.get('line')))
-              print('message=' + str(item.get('message')))
+
+          def load(path):
+              with open(path, encoding='utf-8') as f:
+                  return json.load(f)
+
+          gate = load('gate.json').get('projectStatus', {})
+          print('quality_gate_status=' + str(gate.get('status')))
+          for condition in gate.get('conditions', []):
+              metric = str(condition.get('metricKey'))
+              if 'security' in metric or 'vulnerab' in metric:
+                  print('gate_condition=' + json.dumps(condition, sort_keys=True))
+
+          measures = load('measures.json').get('component', {}).get('measures', [])
+          for measure in measures:
+              print('measure=' + json.dumps(measure, sort_keys=True))
+
+          hotspots = load('hotspots.json')
+          items = hotspots.get('hotspots', [])
+          print(f'to_review_hotspots={len(items)}')
+          for item in items:
+              print('hotspot=' + json.dumps({
+                  'key': item.get('key'),
+                  'component': item.get('component'),
+                  'line': item.get('line'),
+                  'message': item.get('message'),
+                  'securityCategory': item.get('securityCategory'),
+                  'vulnerabilityProbability': item.get('vulnerabilityProbability')
+              }, sort_keys=True))
           PY
