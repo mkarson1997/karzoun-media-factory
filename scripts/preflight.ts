@@ -11,6 +11,7 @@ import { isLocalOllamaModel, type OllamaModelInfo } from '../src/lib/creative-di
 import { trustedOllamaUrl } from '../src/lib/ollama-network-policy';
 
 const execFileAsync = promisify(execFile);
+const FFMPEG_BINARY = '/usr/bin/ffmpeg';
 
 type Check = { name: string; level: 'PASS' | 'WARN' | 'FAIL'; detail: string };
 
@@ -36,7 +37,7 @@ async function main() {
   if (zeroCost) {
     checks.push({ name: 'Zero-cost runtime guard', level: 'PASS', detail: 'external AI APIs, OpenArt and every paid generation provider are hard-blocked' });
     try {
-      await execFileAsync('ffmpeg', ['-version'], { timeout: 10000 });
+      await execFileAsync(FFMPEG_BINARY, ['-version'], { timeout: 10000 });
       checks.push({ name: 'Local FFmpeg renderer', level: 'PASS', detail: 'ffmpeg executable available' });
     } catch {
       checks.push({ name: 'Local FFmpeg renderer', level: 'FAIL', detail: 'ffmpeg executable missing from this runtime' });
