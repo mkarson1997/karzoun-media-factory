@@ -17,23 +17,33 @@ jobs:
       - name: Wait for automatic Sonar analysis
         run: sleep 45
 
-      - name: Print unresolved vulnerability metadata
+      - name: Print unresolved security-impact metadata
         shell: bash
         run: |
           set -euo pipefail
-          URL='https://sonarcloud.io/api/issues/search?componentKeys=mkarson1997_karzoun-media-factory&resolved=false&types=VULNERABILITY&ps=100'
+          URL='https://sonarcloud.io/api/issues/search?componentKeys=mkarson1997_karzoun-media-factory&resolved=false&ps=500'
           curl --fail --silent --show-error "$URL" -o sonar.json
           python3 - <<'PY'
           import json
           with open('sonar.json', encoding='utf-8') as f:
               data = json.load(f)
-          issues = data.get('issues', [])
-          print(f'unresolved_vulnerabilities={len(issues)}')
-          for item in issues:
+          all_issues = data.get('issues', [])
+          security = []
+          for item in all_issues:
+              impacts = item.get('impacts') or []
+              if item.get('type') == 'VULNERABILITY' or any(
+                  str(impact.get('softwareQuality', '')).upper() == 'SECURITY'
+                  for impact in impacts if isinstance(impact, dict)
+              ):
+                  security.append(item)
+          print(f'unresolved_total={len(all_issues)}')
+          print(f'unresolved_security_impacts={len(security)}')
+          for item in security:
               print('---')
               print('key=' + str(item.get('key')))
               print('rule=' + str(item.get('rule')))
               print('severity=' + str(item.get('severity')))
+              print('impacts=' + json.dumps(item.get('impacts'), sort_keys=True))
               print('component=' + str(item.get('component')))
               print('line=' + str(item.get('line')))
               print('message=' + str(item.get('message')))
