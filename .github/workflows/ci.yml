@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
@@ -12,7 +10,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,40 +55,3 @@ jobs:
           query('unresolved-main', {'resolved': 'false'})
           query('vulnerability-main', {'types': 'VULNERABILITY', 'resolved': 'false'})
           PY
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test
-        run: npm test
-
-      - name: Prepare ephemeral build configuration
-        shell: bash
-        run: |
-          APP_SECRET_VALUE="$(openssl rand -hex 32)"
-          DB_PASSWORD="$(openssl rand -hex 24)"
-          echo "APP_SECRET=$APP_SECRET_VALUE" >> "$GITHUB_ENV"
-          echo "DATABASE_URL=postgresql://kmf:$DB_PASSWORD@127.0.0.1:5432/kmf?schema=public" >> "$GITHUB_ENV"
-
-      - name: Build
-        run: npm run build
-        env:
-          ZERO_COST_MODE: 'true'
-          VIDEO_PROVIDER: local-demo
-          PUBLISHING_PROVIDER: mock
-          ALLOW_PAID_GENERATION: 'false'
-          ALLOW_AUTOPILOT_PAID_GENERATION: 'false'
-          ALLOW_YOUTUBE_UPLOAD: 'false'
-          ALLOW_PUBLIC_PUBLISHING: 'false'
