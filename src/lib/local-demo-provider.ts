@@ -8,6 +8,7 @@ import type { VideoGenerationProvider, VideoGenerationRequest, VideoGenerationRe
 const WIDTH = 720;
 const HEIGHT = 1280;
 const FONT = '/usr/share/fonts/ttf-dejavu/DejaVuSans.ttf';
+const FFMPEG_BINARY = '/usr/bin/ffmpeg';
 
 function safeId(value: string) {
   return value.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 80) || 'job';
@@ -60,7 +61,7 @@ export function localDemoFilter(plan: CreativePlan, textFiles: string[], duratio
 
 async function runFfmpeg(args: string[]) {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'], shell: false });
+    const child = spawn(FFMPEG_BINARY, args, { stdio: ['ignore', 'ignore', 'pipe'], shell: false });
     let stderr = '';
     child.stderr.on('data', (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-5000); });
     child.once('error', reject);
