@@ -1,9 +1,13 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 import { generatePromptBank, promptBankStats, promptBankToCsv } from '../src/lib/prompt-bank-generator';
+import { promptCsvFilename, promptCsvPath } from '../src/lib/prompt-csv-file';
+
+const DEFAULT_PROMPT_CSV = 'Karzoun_Media_Lab_1000_Shorts_Prompts.csv';
 
 async function main() {
-  const output = resolve(process.argv[2] || './data/Karzoun_Media_Lab_1000_Shorts_Prompts.csv');
+  const fileName = promptCsvFilename(process.argv[2], DEFAULT_PROMPT_CSV);
+  const output = promptCsvPath(fileName);
   const rows = generatePromptBank();
   await mkdir(dirname(output), { recursive: true });
   await writeFile(output, promptBankToCsv(rows), 'utf8');
