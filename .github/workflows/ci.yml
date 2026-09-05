@@ -54,7 +54,7 @@ jobs:
           ALLOW_YOUTUBE_UPLOAD: 'false'
           ALLOW_PUBLIC_PUBLISHING: 'false'
 
-      - name: Sonar current security inventory
+      - name: Sonar current issue inventory
         shell: bash
         run: |
           python - <<'PY'
@@ -62,34 +62,35 @@ jobs:
           import urllib.parse
           import urllib.request
 
-          params = urllib.parse.urlencode({
-              'componentKeys': 'mkarson1997_karzoun-media-factory',
-              'issueStatuses': 'OPEN,CONFIRMED',
-              'ps': '100',
-          })
-          url = f'https://sonarcloud.io/api/issues/search?{params}'
-          with urllib.request.urlopen(url, timeout=30) as response:
-              payload = json.load(response)
-
-          security = []
-          for issue in payload.get('issues', []):
-              impacts = issue.get('impacts') or []
-              is_security = issue.get('type') == 'VULNERABILITY' or any(
-                  impact.get('softwareQuality') == 'SECURITY' for impact in impacts
-              )
-              if not is_security:
-                  continue
-              item = {
-                  'key': issue.get('key'),
-                  'rule': issue.get('rule'),
-                  'severity': issue.get('severity'),
-                  'type': issue.get('type'),
-                  'component': issue.get('component'),
-                  'line': issue.get('line'),
-                  'message': issue.get('message'),
-                  'impacts': impacts,
+          def query(label, extra):
+              params = {
+                  'componentKeys': 'mkarson1997_karzoun-media-factory',
+                  'branch': 'main',
+                  'ps': '100',
               }
-              security.append(item)
-              print('SONAR_SECURITY_ISSUE ' + json.dumps(item, sort_keys=True))
-          print(f'SONAR_SECURITY_ISSUE_COUNT={len(security)}')
+              params.update(extra)
+              url = 'https://sonarcloud.io/api/issues/search?' + urllib.parse.urlencode(params)
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  payload = json.load(response)
+              issues = payload.get('issues', [])
+              print(f'SONAR_QUERY {label} total={payload.get("total")} returned={len(issues)}')
+              for issue in issues:
+                  item = {
+                      'key': issue.get('key'),
+                      'rule': issue.get('rule'),
+                      'severity': issue.get('severity'),
+                      'type': issue.get('type'),
+                      'status': issue.get('status'),
+                      'issueStatus': issue.get('issueStatus'),
+                      'component': issue.get('component'),
+                      'line': issue.get('line'),
+                      'message': issue.get('message'),
+                      'impacts': issue.get('impacts'),
+                      'cleanCodeAttribute': issue.get('cleanCodeAttribute'),
+                  }
+                  print('SONAR_ISSUE ' + json.dumps(item, sort_keys=True))
+
+          query('all-main', {})
+          query('unresolved-main', {'resolved': 'false'})
+          query('vulnerability-main', {'types': 'VULNERABILITY', 'resolved': 'false'})
           PY
