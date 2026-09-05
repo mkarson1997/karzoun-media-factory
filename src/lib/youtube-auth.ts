@@ -1,4 +1,5 @@
 import { google } from 'googleapis';
+import { trustedAppUrl } from './app-origin';
 import { prisma } from './prisma';
 import { readIntegrationSecret, storeIntegrationSecret } from './secret-store';
 
@@ -11,9 +12,8 @@ const YOUTUBE_SCOPES = [
 function oauthConfig() {
   const clientId = process.env.YOUTUBE_CLIENT_ID;
   const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
-  const baseUrl = process.env.APP_BASE_URL;
-  if (!clientId || !clientSecret || !baseUrl) throw new Error('YouTube OAuth requires YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET and APP_BASE_URL');
-  const redirectUri = new URL('/api/youtube/callback', baseUrl).toString();
+  if (!clientId || !clientSecret) throw new Error('YouTube OAuth requires YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET');
+  const redirectUri = trustedAppUrl('/api/youtube/callback').toString();
   return { clientId, clientSecret, redirectUri };
 }
 
@@ -85,12 +85,15 @@ export async function getAuthorizedYouTubeClient(factoryChannelId?: string) {
 }
 
 export async function getYouTubeConnectionStatus(factoryChannelId?: string) {
-  const hasClient = Boolean(process.env.YOUTUBE_CLIENT_ID && process.env.YOUTUBE_CLIENT_SECRET && process.env.APP_BASE_URL);
+  const hasClient = Boolean(process.env.YOUTUBE_CLIENT_ID && process.env.YOUTUBE_CLIENT_SECRET);
+  let appOriginReady = false;
+  try { trustedAppUrl('/api/youtube/callback'); appOriginReady = true; } catch { appOriginReady = false; }
+  const configured = hasClient && appOriginReady;
   let hasRefreshToken = false;
-  if (hasClient && process.env.APP_SECRET) {
+  if (configured && process.env.APP_SECRET) {
     try { hasRefreshToken = Boolean(await readRefreshToken(factoryChannelId)); } catch { hasRefreshToken = false; }
   } else if (!factoryChannelId) {
     hasRefreshToken = Boolean(process.env.YOUTUBE_REFRESH_TOKEN);
   }
-  return { configured: hasClient, connected: hasClient && hasRefreshToken };
+  return { configured, connected: configured && hasRefreshToken };
 }
