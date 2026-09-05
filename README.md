@@ -1,328 +1,176 @@
 # Karzoun Media Factory
 
-Private, mobile-first control center for AI short-video production.
+[![CI](https://github.com/mkarson1997/karzoun-media-factory/actions/workflows/ci.yml/badge.svg)](https://github.com/mkarson1997/karzoun-media-factory/actions/workflows/ci.yml)
+![Node](https://img.shields.io/badge/Node-24-339933?logo=node.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-96%25-3178C6?logo=typescript&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-Primary channel: **Karzoun Media Lab**.
+Open-source, mobile-first control center for AI-assisted short-video production, review, scheduling, publishing, and analytics.
 
-Flow:
+Karzoun Media Factory is built as a **single-operator, safety-first automation system**. Paid generation, paid Autopilot, YouTube upload, and public publishing are independent runtime locks and remain disabled by default.
 
-`Prompt Bank → Autopilot/Manual Queue → Claude → Video Provider → Review → Smart Schedule → YouTube → Analytics → Better future choices`
+## Pipeline
 
-The factory is single-operator by design. Paid generation, paid Autopilot, YouTube upload, and PUBLIC publishing use separate safety locks.
+```text
+Prompt Bank
+   ↓
+Autopilot / Manual Queue
+   ↓
+Creative Director
+   ↓
+Video Provider
+   ↓
+Human Review Gate
+   ↓
+Smart Schedule
+   ↓
+YouTube
+   ↓
+Analytics → future scheduling / category decisions
+```
+
+## Highlights
+
+- **1,000-prompt deterministic bank** with 650 GENERAL and 350 KIDS_CHANNEL_ONLY briefs.
+- **Human-in-the-loop review** before generated media can move toward publishing.
+- **Provider abstraction** for local/mock and remote AI/video providers.
+- **Zero-cost/local verification path** that does not require production credentials.
+- **Telegram control plane** for status, queue, review, scheduling, pause/resume, and alerts.
+- **YouTube OAuth integration** with explicit channel selection and PRIVATE-first publishing.
+- **Smart scheduling** using timezone-aware constraints and observed factory analytics.
+- **Autopilot safety controls** with rolling limits, database locks, and separate paid-generation authorization.
+- **Remote-media hardening** for HTTPS, host restrictions, local/private-network blocking, redirects, content types, and stream limits.
+- **Encrypted integration credential storage** using AES-256-GCM.
+- **Synthetic demo workflow** for reproducible development and CI.
 
 ## Stack
 
-- Next.js + React + TypeScript
+- Next.js 15 + React 19 + TypeScript
+- Node.js 24
 - PostgreSQL + Prisma
-- Telegram via Telegraf
-- Claude/Anthropic creative director
-- OpenArt remote MCP video provider
+- Telegraf / Telegram Bot API
+- Anthropic, OpenAI/Groq-compatible creative-provider paths, local Ollama path
+- OpenArt MCP integration boundary
 - Google OAuth + YouTube Data API + YouTube Analytics API
 - Zod + Vitest + ESLint
 - Docker Compose
 
-## Fast start
+## Safe quick start
+
+Requirements: Node.js 24 and Docker.
 
 ```bash
 cp .env.example .env
 docker compose up -d --build
 ```
 
-Open:
+Then open `/setup` for the activation/readiness flow or `/dashboard` for the control room.
 
-- `/dashboard` daily control room
-- `/setup` phone-first activation wizard
+The checked-in `.env.example` contains variable names and safe defaults only. Real `.env` files are ignored and must never be committed.
 
-The header safety badge links to `/setup` from every page.
-
-## Activation wizard
-
-`/setup` shows:
-
-- database and operator-security readiness
-- prompt-bank state
-- Telegram state and test action
-- Claude/OpenArt configuration state
-- every YouTube channel binding
-- paid-generation locks
-- Autopilot spending lock
-- YouTube upload lock
-- PUBLIC publishing lock
-
-It shows missing environment-variable **names only**. Secret values are never rendered.
-
-See `docs/PHONE_LAUNCH.md` for the shortest phone-first operating flow.
-
-## Validation
-
-Static + build validation:
+## Verification
 
 ```bash
+npm ci
 npm run validate
-```
-
-Configuration/readiness check:
-
-```bash
-npm run doctor
-```
-
-Safe mock end-to-end test:
-
-```bash
 npm run smoke:mock
 ```
 
-Everything together:
+Or run the complete safe verification path:
 
 ```bash
 npm run verify:mock
 ```
 
-The smoke flow refuses paid/provider upload locks, pauses background lanes, creates temporary data, proves Queue → Generate → Review → Approve + Smart Schedule → Publish, cleans up, then restores the previous factory settings.
+`verify:mock` is designed to validate the factory without real provider credentials or public publishing. The smoke flow pauses unsafe lanes, creates temporary synthetic data, exercises Queue → Generate → Review → Approve/Schedule → Publish through safe providers, cleans up, and restores the previous settings.
 
-## 1,000-prompt bank
+GitHub Actions also runs install, lint, typecheck, tests, and a production build on `main` and pull requests.
 
-The built-in deterministic bank contains exactly:
+## Safety model
 
-- **650 GENERAL** briefs
-- **350 KIDS_CHANNEL_ONLY** briefs
-- 30–59 second targets
-- vertical 9:16 direction
-- hook, pacing, continuity, captions/sound direction, payoff, and loopable ending
-- explicit original-content/copyright constraints
-- additional kids safety constraints
-
-Install with one tap from `/prompts`, or:
-
-```bash
-npm run prompts:bootstrap
-```
-
-GENERAL and KIDS prompts never auto-route into the wrong channel type.
-
-## Autopilot
-
-Autopilot is **off by default**.
-
-When enabled it:
-
-- chooses only unused prompts
-- respects rolling 24-hour production limits
-- keeps GENERAL and KIDS targets separate
-- learns from category performance after real analytics exist
-- still explores categories without enough data
-- penalizes recently repeated categories
-- uses database locks against duplicate workers
-- stops every generated video at manual review
-
-It never approves its own video.
-
-Real paid Autopilot requires both:
+The following controls are independent and default to `false`:
 
 ```text
-ALLOW_PAID_GENERATION=true
-ALLOW_AUTOPILOT_PAID_GENERATION=true
-```
-
-Manual paid testing can unlock only the first value. A blocked paid Autopilot job cannot starve a later manual job in the worker queue.
-
-## Smart scheduling
-
-From Review or Telegram, one tap can **Approve + smart schedule**.
-
-Before enough analytics exist, the scheduler uses clearly labeled starter slots. After enough scored factory publications exist, it learns stronger observed local publishing hours from the factory's own data.
-
-It also enforces:
-
-- minimum lead time
-- minimum spacing between scheduled uploads
-- IANA timezone conversion
-- PRIVATE-first visibility safety
-
-The scheduler does not claim to know a universal YouTube “best time.”
-
-## Telegram control
-
-Configure:
-
-```text
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_ALLOWED_USER_ID=
-APP_BASE_URL=https://factory.example.com
-```
-
-Only the allowlisted Telegram user is accepted.
-
-Useful commands:
-
-```text
-/status
-/autopilot
-/queue
-/review
-/schedule
-/analytics
-/pause
-/resume
-```
-
-Ready-for-review alerts include inline actions for:
-
-- Approve + smart schedule
-- Approve only
-- Regenerate
-- Reject
-
-`/pause` is the emergency brake for generation and publishing.
-
-## Claude creative director
-
-Safe default:
-
-```text
-CREATIVE_DIRECTOR=mock
-```
-
-Real mode:
-
-```text
-CREATIVE_DIRECTOR=anthropic
-ANTHROPIC_API_KEY=
-ANTHROPIC_MODEL=
-```
-
-The creative plan is validated before rendering. The quality gate checks visual-beat count, repetition, hook/script quality, manipulation language, and kids-specific commercial/safety rules.
-
-## OpenArt MCP video generation
-
-Safe default:
-
-```text
-VIDEO_PROVIDER=mock
 ALLOW_PAID_GENERATION=false
 ALLOW_AUTOPILOT_PAID_GENERATION=false
-```
-
-Real configuration:
-
-```text
-VIDEO_PROVIDER=openart-mcp
-OPENART_MCP_URL=https://mcp.openart.ai/mcp
-OPENART_MCP_ACCESS_TOKEN=
-VIDEO_MODEL_HINT=
-```
-
-The OpenArt adapter remains unable to spend credits until `ALLOW_PAID_GENERATION=true`.
-
-Remote generated-media ingestion is HTTPS-only and blocks credentials in URLs, custom ports, private/local networks, unsafe redirects, unsupported content types, and oversized streams. `REMOTE_MEDIA_ALLOWED_HOSTS` can further restrict provider CDN hosts.
-
-## YouTube
-
-Configure:
-
-```text
-YOUTUBE_CLIENT_ID=
-YOUTUBE_CLIENT_SECRET=
-APP_BASE_URL=https://factory.example.com
-APP_SECRET=<at least 32 random characters>
-```
-
-Connect each factory channel separately from `/setup` or `/settings`.
-
-Refresh tokens are stored encrypted with AES-GCM. A KIDS channel never falls back to the GENERAL channel credential.
-
-Safe first upload:
-
-```text
-PUBLISHING_PROVIDER=youtube
-ALLOW_YOUTUBE_UPLOAD=true
+ALLOW_YOUTUBE_UPLOAD=false
 ALLOW_PUBLIC_PUBLISHING=false
 ```
 
-With the public lock closed, real YouTube uploads are forced to **PRIVATE**.
+This separation is intentional. For example, a controlled manual generation test does not automatically authorize paid Autopilot, and enabling YouTube upload does not automatically authorize PUBLIC visibility.
 
-Kids jobs send the Made for Kids declaration automatically from `KIDS_CHANNEL_ONLY` routing.
+Other boundaries include:
 
-## Analytics
+- operator authentication before dashboard/API control paths
+- allowlisted Telegram operator
+- OAuth state verification
+- encrypted refresh-token/integration-secret storage
+- channel-type separation between GENERAL and KIDS workflows
+- PRIVATE-first YouTube behavior
+- generated-media URL validation before ingestion
+- redaction of credential-like provider errors
+- no real secrets required by CI
 
-The worker periodically stores real YouTube metrics and a transparent internal comparison score used by Analytics, Autopilot, and Smart Scheduling.
+See [SECURITY.md](SECURITY.md) before enabling real providers.
 
-The system does not fabricate metrics that the targeted public YouTube Analytics API does not expose.
+## Main surfaces
 
-## Demo data
+| Surface | Purpose |
+| --- | --- |
+| `/dashboard` | Control room, Autopilot state, next publishing actions |
+| `/setup` | Activation and safety-readiness wizard |
+| `/prompts` | Prompt bank and import |
+| `/queue` | Production job queue |
+| `/review` | Mobile human review gate |
+| `/schedule` | Smart/manual scheduling |
+| `/analytics` | Performance cockpit |
+| `/settings` | Limits, channels, providers, and safety controls |
 
-Demo data is opt-in:
+## Autopilot
 
-```text
-SEED_DEMO_DATA=true
-```
+Autopilot is **off by default**. When intentionally enabled it selects unused prompts, respects rolling production limits, keeps GENERAL and KIDS targets separate, uses database locking against duplicate workers, and stops generated videos at manual review.
 
-Production should normally keep:
+It never approves its own video.
 
-```text
-SEED_DEMO_DATA=false
-```
+## Publishing posture
 
-Remove old demo records with:
+The recommended real-provider activation sequence is deliberately gradual:
 
-```bash
-npm run demo:cleanup
-```
+1. Prove the full workflow in mock/local mode.
+2. Configure and test Telegram.
+3. Configure creative/video providers while paid locks remain closed.
+4. Unlock one intentional manual generation test.
+5. Review the result manually.
+6. Connect the exact YouTube channel.
+7. Enable upload while PUBLIC publishing remains locked.
+8. Verify one PRIVATE upload and analytics.
+9. Only then consider paid Autopilot or PUBLIC publishing.
 
-## Production deployment
+## Documentation
 
-With a hosted PostgreSQL/Supabase `DATABASE_URL`:
+- [Security policy](SECURITY.md)
+- [Windows first run](START_HERE_WINDOWS.md)
+- [Activation runbook](docs/ACTIVATION_RUNBOOK.md)
+- [Phone launch flow](docs/PHONE_LAUNCH.md)
+- [Autopilot](docs/AUTOPILOT.md)
+- [Secrets setup](docs/SECRETS_SETUP.md)
+- [Secrets checklist](docs/SECRETS_CHECKLIST.md)
+- [Portfolio engineering showcase](PORTFOLIO_SHOWCASE.md)
+- [Contributing](CONTRIBUTING.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-```bash
-docker compose -f docker-compose.prod.yml up -d --build
-```
+## Repository hygiene
 
-The production web container binds to `127.0.0.1:3000`. Put TLS/reverse-proxy or a secure tunnel in front of it.
+Runtime media, logs, local databases, OAuth material, generated private artifacts, and real environment files are excluded from version control. Public examples and seed data are synthetic.
 
-The worker refuses to start when blocking runtime configuration is invalid.
-
-## Safe first real run
-
-1. Prove the full factory in mock mode.
-2. Configure Telegram and test it from `/setup`.
-3. Configure Claude + OpenArt while paid locks stay closed.
-4. Unlock only manual paid generation and render one real video.
-5. Review it manually.
-6. Connect the intended YouTube channel.
-7. Enable YouTube upload while PUBLIC stays locked.
-8. Upload one PRIVATE video.
-9. Verify the publish record and analytics.
-10. Only then consider paid Autopilot or PUBLIC publishing.
-
-## Pages
-
-- `/dashboard` control room + Autopilot + next publishing
-- `/setup` activation wizard
-- `/prompts` prompt bank and import
-- `/queue` production jobs
-- `/review` mobile video quality gate
-- `/schedule` smart/manual scheduling
-- `/analytics` performance cockpit
-- `/settings` limits, channels, providers and safety controls
+If a credential is ever committed, deleting the current file is not sufficient. Revoke/rotate it and treat Git history as exposed.
 
 ## Project status
 
-Implemented:
+Implemented areas include the control plane, prompt bank, creative-provider layer, video-provider layer, mobile/Telegram review, YouTube OAuth and private-first publishing, scheduling, analytics, Autopilot, activation/readiness tooling, and production safety controls.
 
-- control plane
-- 1,000-prompt bank
-- Claude creative director
-- OpenArt MCP boundary
-- mobile + Telegram review
-- YouTube OAuth/private-first publishing
-- scheduling
-- analytics
-- Autopilot
-- smart scheduling
-- activation wizard
-- production safety hardening
+Real external-provider behavior still depends on each operator's credentials, provider availability, quotas, billing, and account configuration. Those external conditions are not represented as guaranteed by this repository.
 
-The final external gate is running `npm run verify:mock` and the first real provider/PRIVATE YouTube tests in an environment with Node, Docker, database access, and the operator's secrets.
+## License
 
-See `SECURITY.md`, `docs/ACTIVATION_RUNBOOK.md`, and `docs/PHONE_LAUNCH.md` before opening real-provider locks.
+Released under the [MIT License](LICENSE). Third-party dependencies and external services remain subject to their own licenses and terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
