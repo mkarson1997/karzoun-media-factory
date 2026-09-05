@@ -10,108 +10,76 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          node-version: 24
-          cache: npm
+          python-version: '3.12'
 
-      - name: Install project dependencies
-        run: npm ci --ignore-scripts
+      - name: Install Semgrep diagnostically
+        run: python -m pip install --disable-pip-version-check --quiet semgrep
 
-      - name: Install SonarJS ESLint plugin without modifying the lockfile
-        run: npm install --no-save --package-lock=false --ignore-scripts eslint-plugin-sonarjs@latest
-
-      - name: Run SonarJS vulnerability rules
+      - name: Run taint-focused security scan
         shell: bash
         run: |
-          cat > eslint.security-diagnostic.mjs <<'EOF'
-          import base from './eslint.config.mjs';
-          import sonarjs from 'eslint-plugin-sonarjs';
-
-          const vulnerabilityDescriptions = new Set([
-            'Administration services access should be restricted to specific IP addresses',
-            'AWS IAM policies should limit the scope of permissions given',
-            'Applications should not create session cookies from untrusted input',
-            'DOM updates should not lead to open redirect vulnerabilities',
-            'Extracting archives should not lead to zip slip vulnerabilities',
-            'OS commands should not be vulnerable to argument injection attacks',
-            'A new session should be created during user authentication',
-            'DOM updates should not lead to cross-site scripting (XSS) attacks',
-            'JWT should be signed and verified with strong cipher algorithms',
-            'Cipher algorithms should be robust',
-            'Encryption algorithms should be used with secure mode and padding scheme',
-            'Server hostnames should be verified during SSL/TLS connections',
-            'Dynamic code execution should not be vulnerable to injection attacks',
-            'NoSQL operations should not be vulnerable to injection attacks',
-            'HTTP request redirections should not be open to forging attacks',
-            'Server-side requests should not be vulnerable to forging attacks',
-            'Endpoints should not be vulnerable to reflected cross-site scripting (XSS) attacks',
-            'Server certificates should be verified during SSL/TLS connections',
-            'Cryptographic keys should be robust',
-            'Weak SSL/TLS protocols should not be used',
-            'Database queries should not be vulnerable to injection attacks',
-            'Local storage should not be used',
-            'Origins should be verified during cross-origin communications',
-            'Web SQL databases should not be used',
-            'XML parsers should not be vulnerable to XXE attacks',
-            'Regular expressions should not be vulnerable to Denial of Service attacks',
-            'File uploads should be restricted',
-            'I/O function calls should not be vulnerable to path injection attacks',
-            'OS commands should not be vulnerable to command injection attacks',
-            'Debugger statements should not be used'
-          ]);
-
-          const selected = Object.entries(sonarjs.rules).filter(([, rule]) => {
-            const description = rule?.meta?.docs?.description;
-            return vulnerabilityDescriptions.has(description);
-          });
-
-          console.error(`SONARJS_VULNERABILITY_RULES=${selected.length}`);
-          for (const [name, rule] of selected) {
-            console.error(`SONARJS_RULE ${name} :: ${rule.meta.docs.description}`);
-          }
-
-          const rules = Object.fromEntries(selected.map(([name]) => [`sonarjs/${name}`, 'error']));
-
-          export default [
-            ...base,
-            {
-              plugins: { sonarjs },
-              rules
-            }
-          ];
-          EOF
-
           set +e
-          npx eslint . --config eslint.security-diagnostic.mjs --format json > sonarjs-vulnerabilities.json
+          semgrep scan \
+            --config p/javascript \
+            --config p/typescript \
+            --config p/security-audit \
+            --json \
+            --exclude node_modules \
+            --exclude .next \
+            --exclude coverage \
+            --exclude data \
+            --exclude media \
+            . > semgrep.json
           status=$?
           set -e
 
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const results = JSON.parse(fs.readFileSync('sonarjs-vulnerabilities.json', 'utf8'));
-          let count = 0;
-          for (const result of results) {
-            for (const item of result.messages || []) {
-              if (!String(item.ruleId || '').startsWith('sonarjs/')) continue;
-              count += 1;
-              console.log('SONARJS_FINDING ' + JSON.stringify({
-                file: result.filePath.replace(process.cwd() + '/', ''),
-                rule: item.ruleId,
-                line: item.line,
-                column: item.column,
-                message: item.message,
-                severity: item.severity
-              }));
-            }
-          }
-          console.log(`SONARJS_FINDING_COUNT=${count}`);
-          NODE
+          python - <<'PY'
+          import json
+          from pathlib import Path
 
-          echo "eslint_exit_status=$status"
+          data = json.loads(Path('semgrep.json').read_text(encoding='utf-8'))
+          results = data.get('results', [])
+          interesting_terms = (
+              'ssrf', 'server-side request', 'redirect', 'command', 'argument injection',
+              'path traversal', 'path injection', 'xss', 'cross-site scripting',
+              'sql', 'nosql', 'regex', 'redos', 'denial of service', 'eval',
+              'injection', 'prototype pollution', 'deserialization'
+          )
+          findings = []
+          for item in results:
+              extra = item.get('extra') or {}
+              metadata = extra.get('metadata') or {}
+              text = ' '.join([
+                  str(item.get('check_id', '')),
+                  str(extra.get('message', '')),
+                  str(metadata.get('category', '')),
+                  str(metadata.get('technology', '')),
+                  str(metadata.get('cwe', '')),
+                  str(metadata.get('owasp', '')),
+              ]).lower()
+              severity = str(extra.get('severity', '')).upper()
+              if severity in {'ERROR', 'WARNING'} or any(term in text for term in interesting_terms):
+                  findings.append({
+                      'rule': item.get('check_id'),
+                      'path': item.get('path'),
+                      'line': (item.get('start') or {}).get('line'),
+                      'severity': severity,
+                      'message': extra.get('message'),
+                      'cwe': metadata.get('cwe'),
+                      'owasp': metadata.get('owasp'),
+                  })
+          print(f'SEMGREP_TOTAL={len(results)}')
+          print(f'SEMGREP_INTERESTING={len(findings)}')
+          for finding in findings:
+              print('SEMGREP_FINDING ' + json.dumps(finding, sort_keys=True))
+          PY
+
+          echo "semgrep_exit_status=$status"
