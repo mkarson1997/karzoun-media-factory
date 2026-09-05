@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { trustedAppBaseUrl, trustedAppUrl } from '@/src/lib/app-origin';
 import { assertSameOriginMutation } from '@/src/lib/http-security';
 
 export async function POST(request: NextRequest) {
@@ -8,11 +9,18 @@ export async function POST(request: NextRequest) {
     return new NextResponse('Request rejected', { status: 400 });
   }
 
-  const response = NextResponse.redirect(new URL('/login', request.url), 303);
+  let baseUrl: URL;
+  try {
+    baseUrl = trustedAppBaseUrl();
+  } catch {
+    return new NextResponse('APP_BASE_URL is not safely configured.', { status: 503 });
+  }
+
+  const response = NextResponse.redirect(trustedAppUrl('/login'), 303);
   response.headers.set('cache-control', 'no-store');
   response.cookies.set('kmf_session', '', {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: baseUrl.protocol === 'https:',
     sameSite: 'lax',
     path: '/',
     maxAge: 0

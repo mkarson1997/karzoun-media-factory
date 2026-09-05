@@ -1,11 +1,11 @@
 import { google } from 'googleapis';
 import { NextRequest, NextResponse } from 'next/server';
+import { trustedAppUrl } from '@/src/lib/app-origin';
 import { assertSameOriginMutation } from '@/src/lib/http-security';
 import { prisma } from '@/src/lib/prisma';
 import { getAuthorizedYouTubeClient } from '@/src/lib/youtube-auth';
 
 export async function POST(request: NextRequest) {
-  const settings = new URL('/settings', request.url);
   try {
     assertSameOriginMutation(request);
     const form = await request.formData();
@@ -39,11 +39,12 @@ export async function POST(request: NextRequest) {
       }
     });
 
-    settings.searchParams.set('youtube', 'connected');
-    settings.searchParams.set('channelId', factoryChannel.id);
-    return NextResponse.redirect(settings, 303);
+    return NextResponse.redirect(trustedAppUrl(`/settings?youtube=connected&channelId=${encodeURIComponent(factoryChannel.id)}`), 303);
   } catch {
-    settings.searchParams.set('youtube', 'bind-error');
-    return NextResponse.redirect(settings, 303);
+    try {
+      return NextResponse.redirect(trustedAppUrl('/settings?youtube=bind-error'), 303);
+    } catch {
+      return new NextResponse('APP_BASE_URL is not safely configured.', { status: 503 });
+    }
   }
 }

@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { trustedAppUrl } from '@/src/lib/app-origin';
 import { exchangeYouTubeAuthorizationCode } from '@/src/lib/youtube-auth';
 import { prisma } from '@/src/lib/prisma';
 
@@ -9,14 +10,10 @@ function equalState(left: string, right: string) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function factoryUrl(path: string) {
-  const baseUrl = process.env.APP_BASE_URL;
-  if (!baseUrl) throw new Error('APP_BASE_URL is required for OAuth redirects');
-  return new URL(path, baseUrl);
-}
-
-function redirectAndClear(next: URL) {
-  const response = NextResponse.redirect(next);
+function redirectAndClear(pathname: string, params?: Record<string, string>) {
+  const target = trustedAppUrl(pathname);
+  for (const [key, value] of Object.entries(params ?? {})) target.searchParams.set(key, value);
+  const response = NextResponse.redirect(target);
   response.cookies.delete('youtube_oauth_state');
   response.cookies.delete('youtube_oauth_channel');
   return response;
@@ -47,26 +44,20 @@ async function bindChannel(factoryChannelId: string, youtubeChannelId: string, y
 }
 
 export async function GET(request: NextRequest) {
-  const settings = factoryUrl('/settings');
   const code = request.nextUrl.searchParams.get('code');
   const state = request.nextUrl.searchParams.get('state');
   const error = request.nextUrl.searchParams.get('error');
   const expectedState = request.cookies.get('youtube_oauth_state')?.value;
   const factoryChannelId = request.cookies.get('youtube_oauth_channel')?.value;
 
-  if (error) {
-    settings.searchParams.set('youtube', 'denied');
-    return redirectAndClear(settings);
-  }
+  if (error) return redirectAndClear('/settings', { youtube: 'denied' });
   if (!code || !state || !expectedState || !equalState(state, expectedState) || !factoryChannelId) {
-    settings.searchParams.set('youtube', 'state-error');
-    return redirectAndClear(settings);
+    return redirectAndClear('/settings', { youtube: 'state-error' });
   }
 
   const factoryChannel = await prisma.channel.findUnique({ where: { id: factoryChannelId } });
   if (!factoryChannel || !factoryChannel.enabled) {
-    settings.searchParams.set('youtube', 'channel-error');
-    return redirectAndClear(settings);
+    return redirectAndClear('/settings', { youtube: 'channel-error' });
   }
 
   try {
@@ -80,16 +71,11 @@ export async function GET(request: NextRequest) {
     if (channels.length === 1) {
       const channel = channels[0];
       await bindChannel(factoryChannel.id, channel.id!, channel.snippet?.title);
-      settings.searchParams.set('youtube', 'connected');
-      settings.searchParams.set('channelId', factoryChannel.id);
-      return redirectAndClear(settings);
+      return redirectAndClear('/settings', { youtube: 'connected', channelId: factoryChannel.id });
     }
 
-    const select = factoryUrl('/youtube/select');
-    select.searchParams.set('channelId', factoryChannel.id);
-    return redirectAndClear(select);
+    return redirectAndClear('/youtube/select', { channelId: factoryChannel.id });
   } catch {
-    settings.searchParams.set('youtube', 'exchange-error');
-    return redirectAndClear(settings);
+    return redirectAndClear('/settings', { youtube: 'exchange-error' });
   }
 }

@@ -1,21 +1,11 @@
 import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { trustedAppBaseUrl, trustedAppUrl } from '@/src/lib/app-origin';
 import { consumeRateLimit, requestClientKey } from '@/src/lib/rate-limit';
 import { deriveSessionToken } from '@/src/lib/session-token';
 
 function safeNextPath(value: string) {
   return value.startsWith('/') && !value.startsWith('//') && !value.includes('\\') ? value : '/dashboard';
-}
-
-function configuredBaseUrl() {
-  const raw = process.env.APP_BASE_URL;
-  if (!raw) throw new Error('APP_BASE_URL is not configured');
-  const url = new URL(raw);
-  if (process.env.NODE_ENV === 'production' && url.protocol !== 'https:') {
-    throw new Error('APP_BASE_URL must use HTTPS in production');
-  }
-  if (url.username || url.password) throw new Error('APP_BASE_URL cannot contain credentials');
-  return url;
 }
 
 function safeSecretEqual(supplied: string, configured: string) {
@@ -32,7 +22,7 @@ export async function POST(request: NextRequest) {
 
   let baseUrl: URL;
   try {
-    baseUrl = configuredBaseUrl();
+    baseUrl = trustedAppBaseUrl();
   } catch {
     return new NextResponse('APP_BASE_URL is not safely configured.', { status: 503 });
   }
@@ -51,13 +41,13 @@ export async function POST(request: NextRequest) {
   const nextPath = safeNextPath(String(form.get('next') ?? '/dashboard'));
 
   if (!safeSecretEqual(supplied, configured)) {
-    const target = new URL('/login', baseUrl);
+    const target = trustedAppUrl('/login');
     target.searchParams.set('error', '1');
     target.searchParams.set('next', nextPath);
     return NextResponse.redirect(target, 303);
   }
 
-  const response = NextResponse.redirect(new URL(nextPath, baseUrl), 303);
+  const response = NextResponse.redirect(trustedAppUrl(nextPath), 303);
   response.headers.set('cache-control', 'no-store');
   response.cookies.set('kmf_session', await deriveSessionToken(configured), {
     httpOnly: true,

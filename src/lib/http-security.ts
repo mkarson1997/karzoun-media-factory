@@ -1,11 +1,11 @@
 import type { NextRequest } from 'next/server';
+import { trustedAppBaseUrl } from './app-origin';
 
 export function assertSameOriginMutation(request: NextRequest) {
   const origin = request.headers.get('origin');
   if (!origin) return;
-  const expected = process.env.APP_BASE_URL;
-  const requestOrigin = request.nextUrl.origin;
-  if (origin !== requestOrigin && (!expected || origin !== new URL(expected).origin)) {
+  const expected = trustedAppBaseUrl().origin;
+  if (origin !== expected) {
     throw new Error('Cross-origin mutation rejected');
   }
 }
