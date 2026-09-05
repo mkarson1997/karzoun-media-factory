@@ -12,47 +12,39 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     steps:
-      - name: Wait for automatic Sonar analysis
-        run: sleep 35
-
       - name: Print public Sonar quality metadata
         shell: bash
         run: |
           set -euo pipefail
           PROJECT='mkarson1997_karzoun-media-factory'
-          curl --fail --silent --show-error "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$PROJECT&branch=main" -o gate.json
-          curl --fail --silent --show-error "https://sonarcloud.io/api/measures/component?component=$PROJECT&metricKeys=security_rating,new_security_rating,vulnerabilities,new_vulnerabilities,security_hotspots,new_security_hotspots,security_review_rating,new_security_review_rating" -o measures.json
-          curl --fail --silent --show-error "https://sonarcloud.io/api/hotspots/search?projectKey=$PROJECT&status=TO_REVIEW&ps=100" -o hotspots.json
+
+          gate_code=$(curl --silent --show-error --output gate.json --write-out '%{http_code}' "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$PROJECT&branch=main")
+          measures_code=$(curl --silent --show-error --output measures.json --write-out '%{http_code}' "https://sonarcloud.io/api/measures/component?component=$PROJECT&metricKeys=security_rating,new_security_rating,vulnerabilities,new_vulnerabilities")
+          echo "gate_http=$gate_code"
+          echo "measures_http=$measures_code"
+
           python3 - <<'PY'
           import json
 
           def load(path):
-              with open(path, encoding='utf-8') as f:
-                  return json.load(f)
+              try:
+                  with open(path, encoding='utf-8') as f:
+                      return json.load(f)
+              except Exception as exc:
+                  return {'error': str(exc)}
 
-          gate = load('gate.json').get('projectStatus', {})
+          gate_data = load('gate.json')
+          gate = gate_data.get('projectStatus', {}) if isinstance(gate_data, dict) else {}
           print('quality_gate_status=' + str(gate.get('status')))
           for condition in gate.get('conditions', []):
               metric = str(condition.get('metricKey'))
               if 'security' in metric or 'vulnerab' in metric:
                   print('gate_condition=' + json.dumps(condition, sort_keys=True))
 
-          measures = load('measures.json').get('component', {}).get('measures', [])
+          measures_data = load('measures.json')
+          measures = measures_data.get('component', {}).get('measures', []) if isinstance(measures_data, dict) else []
           for measure in measures:
               print('measure=' + json.dumps(measure, sort_keys=True))
-
-          hotspots = load('hotspots.json')
-          items = hotspots.get('hotspots', [])
-          print(f'to_review_hotspots={len(items)}')
-          for item in items:
-              print('hotspot=' + json.dumps({
-                  'key': item.get('key'),
-                  'component': item.get('component'),
-                  'line': item.get('line'),
-                  'message': item.get('message'),
-                  'securityCategory': item.get('securityCategory'),
-                  'vulnerabilityProbability': item.get('vulnerabilityProbability')
-              }, sort_keys=True))
           PY
