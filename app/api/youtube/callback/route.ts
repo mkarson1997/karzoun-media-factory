@@ -10,8 +10,10 @@ function equalState(left: string, right: string) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function redirectAndClear(pathname: string) {
-  const response = NextResponse.redirect(trustedAppUrl(pathname));
+function redirectAndClear(pathname: string, params?: Record<string, string>) {
+  const target = trustedAppUrl(pathname);
+  for (const [key, value] of Object.entries(params ?? {})) target.searchParams.set(key, value);
+  const response = NextResponse.redirect(target);
   response.cookies.delete('youtube_oauth_state');
   response.cookies.delete('youtube_oauth_channel');
   return response;
@@ -48,14 +50,14 @@ export async function GET(request: NextRequest) {
   const expectedState = request.cookies.get('youtube_oauth_state')?.value;
   const factoryChannelId = request.cookies.get('youtube_oauth_channel')?.value;
 
-  if (error) return redirectAndClear('/settings?youtube=denied');
+  if (error) return redirectAndClear('/settings', { youtube: 'denied' });
   if (!code || !state || !expectedState || !equalState(state, expectedState) || !factoryChannelId) {
-    return redirectAndClear('/settings?youtube=state-error');
+    return redirectAndClear('/settings', { youtube: 'state-error' });
   }
 
   const factoryChannel = await prisma.channel.findUnique({ where: { id: factoryChannelId } });
   if (!factoryChannel || !factoryChannel.enabled) {
-    return redirectAndClear('/settings?youtube=channel-error');
+    return redirectAndClear('/settings', { youtube: 'channel-error' });
   }
 
   try {
@@ -69,11 +71,11 @@ export async function GET(request: NextRequest) {
     if (channels.length === 1) {
       const channel = channels[0];
       await bindChannel(factoryChannel.id, channel.id!, channel.snippet?.title);
-      return redirectAndClear(`/settings?youtube=connected&channelId=${encodeURIComponent(factoryChannel.id)}`);
+      return redirectAndClear('/settings', { youtube: 'connected', channelId: factoryChannel.id });
     }
 
-    return redirectAndClear(`/youtube/select?channelId=${encodeURIComponent(factoryChannel.id)}`);
+    return redirectAndClear('/youtube/select', { channelId: factoryChannel.id });
   } catch {
-    return redirectAndClear('/settings?youtube=exchange-error');
+    return redirectAndClear('/settings', { youtube: 'exchange-error' });
   }
 }
