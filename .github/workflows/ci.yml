@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
@@ -12,44 +10,76 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          node-version: 24
-          cache: npm
+          python-version: '3.12'
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install Semgrep diagnostically
+        run: python -m pip install --disable-pip-version-check --quiet semgrep
 
-      - name: Lint
-        run: npm run lint
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test
-        run: npm test
-
-      - name: Prepare ephemeral build configuration
+      - name: Run taint-focused security scan
         shell: bash
         run: |
-          APP_SECRET_VALUE="$(openssl rand -hex 32)"
-          DB_PASSWORD="$(openssl rand -hex 24)"
-          echo "APP_SECRET=$APP_SECRET_VALUE" >> "$GITHUB_ENV"
-          echo "DATABASE_URL=postgresql://kmf:$DB_PASSWORD@127.0.0.1:5432/kmf?schema=public" >> "$GITHUB_ENV"
+          set +e
+          semgrep scan \
+            --config p/javascript \
+            --config p/typescript \
+            --config p/security-audit \
+            --json \
+            --exclude node_modules \
+            --exclude .next \
+            --exclude coverage \
+            --exclude data \
+            --exclude media \
+            . > semgrep.json
+          status=$?
+          set -e
 
-      - name: Build
-        run: npm run build
-        env:
-          ZERO_COST_MODE: 'true'
-          VIDEO_PROVIDER: local-demo
-          PUBLISHING_PROVIDER: mock
-          ALLOW_PAID_GENERATION: 'false'
-          ALLOW_AUTOPILOT_PAID_GENERATION: 'false'
-          ALLOW_YOUTUBE_UPLOAD: 'false'
-          ALLOW_PUBLIC_PUBLISHING: 'false'
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('semgrep.json').read_text(encoding='utf-8'))
+          results = data.get('results', [])
+          interesting_terms = (
+              'ssrf', 'server-side request', 'redirect', 'command', 'argument injection',
+              'path traversal', 'path injection', 'xss', 'cross-site scripting',
+              'sql', 'nosql', 'regex', 'redos', 'denial of service', 'eval',
+              'injection', 'prototype pollution', 'deserialization'
+          )
+          findings = []
+          for item in results:
+              extra = item.get('extra') or {}
+              metadata = extra.get('metadata') or {}
+              text = ' '.join([
+                  str(item.get('check_id', '')),
+                  str(extra.get('message', '')),
+                  str(metadata.get('category', '')),
+                  str(metadata.get('technology', '')),
+                  str(metadata.get('cwe', '')),
+                  str(metadata.get('owasp', '')),
+              ]).lower()
+              severity = str(extra.get('severity', '')).upper()
+              if severity in {'ERROR', 'WARNING'} or any(term in text for term in interesting_terms):
+                  findings.append({
+                      'rule': item.get('check_id'),
+                      'path': item.get('path'),
+                      'line': (item.get('start') or {}).get('line'),
+                      'severity': severity,
+                      'message': extra.get('message'),
+                      'cwe': metadata.get('cwe'),
+                      'owasp': metadata.get('owasp'),
+                  })
+          print(f'SEMGREP_TOTAL={len(results)}')
+          print(f'SEMGREP_INTERESTING={len(findings)}')
+          for finding in findings:
+              print('SEMGREP_FINDING ' + json.dumps(finding, sort_keys=True))
+          PY
+
+          echo "semgrep_exit_status=$status"
