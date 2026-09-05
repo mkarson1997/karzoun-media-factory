@@ -1,28 +1,41 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { consumeRateLimit, requestClientKey } from '@/src/lib/rate-limit';
-
-function hash(value: string) {
-  return createHash('sha256').update(value).digest('hex');
-}
+import { deriveSessionToken } from '@/src/lib/session-token';
 
 function safeNextPath(value: string) {
   return value.startsWith('/') && !value.startsWith('//') && !value.includes('\\') ? value : '/dashboard';
 }
 
-function secureSessionCookie() {
-  try { return new URL(process.env.APP_BASE_URL || '').protocol === 'https:'; }
-  catch { return process.env.NODE_ENV === 'production'; }
+function configuredBaseUrl() {
+  const raw = process.env.APP_BASE_URL;
+  if (!raw) throw new Error('APP_BASE_URL is not configured');
+  const url = new URL(raw);
+  if (process.env.NODE_ENV === 'production' && url.protocol !== 'https:') {
+    throw new Error('APP_BASE_URL must use HTTPS in production');
+  }
+  if (url.username || url.password) throw new Error('APP_BASE_URL cannot contain credentials');
+  return url;
 }
 
-function externalBaseUrl(request: NextRequest) {
-  try { return new URL(process.env.APP_BASE_URL || request.url); }
-  catch { return new URL(request.url); }
+function safeSecretEqual(supplied: string, configured: string) {
+  const left = Buffer.from(supplied, 'utf8');
+  const right = Buffer.from(configured, 'utf8');
+  return left.length === right.length && timingSafeEqual(left, right);
 }
 
 export async function POST(request: NextRequest) {
   const configured = process.env.APP_SECRET;
-  if (!configured) return new NextResponse('APP_SECRET is not configured.', { status: 503 });
+  if (!configured || configured.length < 32) {
+    return new NextResponse('APP_SECRET must be configured with at least 32 characters.', { status: 503 });
+  }
+
+  let baseUrl: URL;
+  try {
+    baseUrl = configuredBaseUrl();
+  } catch {
+    return new NextResponse('APP_BASE_URL is not safely configured.', { status: 503 });
+  }
 
   const client = requestClientKey(request.headers);
   const rate = consumeRateLimit(`login:${client}`, 10, 15 * 60_000);
@@ -36,22 +49,19 @@ export async function POST(request: NextRequest) {
   const form = await request.formData();
   const supplied = String(form.get('secret') ?? '');
   const nextPath = safeNextPath(String(form.get('next') ?? '/dashboard'));
-  const left = Buffer.from(hash(supplied));
-  const right = Buffer.from(hash(configured));
-  const valid = left.length === right.length && timingSafeEqual(left, right);
 
-  if (!valid) {
-    const target = new URL('/login', externalBaseUrl(request));
+  if (!safeSecretEqual(supplied, configured)) {
+    const target = new URL('/login', baseUrl);
     target.searchParams.set('error', '1');
     target.searchParams.set('next', nextPath);
     return NextResponse.redirect(target, 303);
   }
 
-  const response = NextResponse.redirect(new URL(nextPath, externalBaseUrl(request)), 303);
+  const response = NextResponse.redirect(new URL(nextPath, baseUrl), 303);
   response.headers.set('cache-control', 'no-store');
-  response.cookies.set('kmf_session', hash(`kmf:${configured}`), {
+  response.cookies.set('kmf_session', await deriveSessionToken(configured), {
     httpOnly: true,
-    secure: secureSessionCookie(),
+    secure: baseUrl.protocol === 'https:',
     sameSite: 'lax',
     path: '/',
     maxAge: 60 * 60 * 24 * 30
