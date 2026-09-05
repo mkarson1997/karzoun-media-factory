@@ -27,6 +27,13 @@ function aiProviderConfigured(env: NodeJS.ProcessEnv, provider: string) {
   return false;
 }
 
+function remoteMediaAllowlistConfigured(env: NodeJS.ProcessEnv) {
+  return (env.REMOTE_MEDIA_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .some(Boolean);
+}
+
 export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): ReadinessCheck[] {
   const production = env.NODE_ENV === 'production';
   const videoProvider = env.VIDEO_PROVIDER || 'mock';
@@ -94,6 +101,15 @@ export function evaluateRuntimeSafety(env: NodeJS.ProcessEnv = process.env): Rea
       ok: safeBaseUrl(env.OPENART_MCP_URL || 'https://mcp.openart.ai/mcp'),
       severity: 'required',
       detail: 'Direct authenticated MCP selected. OpenArt OAuth is resolved from the encrypted durable credential store, with .env as a fallback; no AI bridge is required.'
+    });
+    const mediaHostsConfigured = remoteMediaAllowlistConfigured(env);
+    checks.push({
+      name: 'Remote media host allowlist',
+      ok: mediaHostsConfigured,
+      severity: 'required',
+      detail: mediaHostsConfigured
+        ? 'explicit trusted REMOTE_MEDIA_ALLOWED_HOSTS configured'
+        : 'REMOTE_MEDIA_ALLOWED_HOSTS is required before remote generated media can be ingested'
     });
     checks.push({
       name: 'Paid generation lock',
