@@ -1,0 +1,40 @@
+name: Sonar diagnostics
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/sonar-diagnostics.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wait for automatic Sonar analysis
+        run: sleep 45
+
+      - name: Print unresolved vulnerability metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://sonarcloud.io/api/issues/search?componentKeys=mkarson1997_karzoun-media-factory&resolved=false&types=VULNERABILITY&ps=100'
+          curl --fail --silent --show-error "$URL" -o sonar.json
+          python3 - <<'PY'
+          import json
+          with open('sonar.json', encoding='utf-8') as f:
+              data = json.load(f)
+          issues = data.get('issues', [])
+          print(f'unresolved_vulnerabilities={len(issues)}')
+          for item in issues:
+              print('---')
+              print('key=' + str(item.get('key')))
+              print('rule=' + str(item.get('rule')))
+              print('severity=' + str(item.get('severity')))
+              print('component=' + str(item.get('component')))
+              print('line=' + str(item.get('line')))
+              print('message=' + str(item.get('message')))
+          PY
