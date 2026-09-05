@@ -17,7 +17,7 @@ POSTGRES_PASSWORD=
 APP_SECRET=
 ```
 
-`APP_SECRET` is also the operator password used by the private dashboard login. The script keeps every paid/publishing safety lock closed.
+`APP_SECRET` is also the operator password used by the private dashboard login. Use at least 32 random characters. The script keeps every paid/publishing safety lock closed.
 
 The local host port defaults to 3100 so port 3000 can remain available to other projects:
 
@@ -45,9 +45,9 @@ If you intentionally choose another local port later, change both `KMF_PORT` and
 
 ### Important: reloading `.env`
 
-`docker compose restart` restarts the existing containers with their existing environment. It does **not** reliably reload newly edited values from `.env` into already-created containers.
+`docker compose restart` restarts existing containers with their existing environment. It does not reliably reload newly edited values from `.env` into already-created containers.
 
-After changing Telegram, Claude, OpenArt, YouTube, or any other `.env` value, use:
+After changing Telegram, AI-provider, OpenArt, YouTube, or any other `.env` value, use:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\reload-env.ps1
@@ -84,36 +84,23 @@ $token = 'PASTE_YOUR_BOT_TOKEN_HERE'
 TELEGRAM_ALLOWED_USER_ID=
 ```
 
-4. Save `.env`, then reload the environment into the containers:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\reload-env.ps1
-```
-
+4. Save `.env`, then reload the environment into the containers.
 5. Open `/settings` and press `Send test notification`.
 
 Treat the bot token as a password. If it is ever exposed, revoke/regenerate it in BotFather.
 
-## 3. Claude / Anthropic API
+## 3. AI creative providers
 
-Go to the Claude developer console at `https://platform.claude.com/`, then Settings -> API keys -> Create key.
-
-Put the key only in `.env`:
+Provider credentials belong only in `.env` or the deployment secret store. Examples:
 
 ```text
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-opus-5
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=
+OPENAI_API_KEY=
+GROQ_API_KEY=
 ```
 
-For real creative planning change:
-
-```text
-CREATIVE_DIRECTOR=anthropic
-```
-
-After editing `.env`, run `scripts/reload-env.ps1` so the app and worker receive the new values.
-
-A Claude web/desktop subscription and Claude API billing are separate. Make sure the developer console has usable API credits/billing before testing the real creative director.
+Keep the deterministic/local path while testing repository behavior. Enabling a remote AI provider does not unlock paid video generation or publishing.
 
 ## 4. OpenArt MCP
 
@@ -123,29 +110,15 @@ OpenArt's remote MCP endpoint is:
 OPENART_MCP_URL=https://mcp.openart.ai/mcp
 ```
 
-The normal Claude connector flow manages OpenArt sign-in for Claude itself, but Karzoun Media Factory calls OpenArt through Anthropic's server-side MCP connector. That server-side path needs an OAuth access token.
-
-For the first test, use the official MCP Inspector OAuth flow:
+For the official MCP Inspector OAuth flow:
 
 ```powershell
 npx @modelcontextprotocol/inspector
 ```
 
-Then in the Inspector:
+Then connect `https://mcp.openart.ai/mcp`, complete the OAuth flow, and use the repository's importer to place rotating credentials into the encrypted credential store. Real token values must never be committed.
 
-1. Choose `Streamable HTTP`.
-2. Enter `https://mcp.openart.ai/mcp`.
-3. Open Auth Settings.
-4. Start `Quick OAuth Flow`.
-5. Sign in to OpenArt and approve access.
-6. Continue until authentication completes.
-7. Copy the returned `access_token` into:
-
-```text
-OPENART_MCP_ACCESS_TOKEN=
-```
-
-Keep these settings until the first paid test is intentional:
+Keep these settings until a paid test is intentional:
 
 ```text
 VIDEO_PROVIDER=mock
@@ -153,7 +126,7 @@ ALLOW_PAID_GENERATION=false
 ALLOW_AUTOPILOT_PAID_GENERATION=false
 ```
 
-When ready for exactly one manual real render:
+For a controlled real-provider configuration:
 
 ```text
 VIDEO_PROVIDER=openart-mcp
@@ -161,31 +134,32 @@ ALLOW_PAID_GENERATION=true
 ALLOW_AUTOPILOT_PAID_GENERATION=false
 ```
 
-After editing `.env`, run `scripts/reload-env.ps1`.
+### Remote media host allowlist
 
-The current factory uses the access token you provide. OAuth access tokens can expire; if OpenArt authentication later fails, repeat the OAuth flow to obtain a fresh token before re-enabling production.
-
-Optional:
+Remote generated media is fail-closed. Before the factory can ingest a remote video, configure the exact trusted provider/CDN hostnames you intend to accept:
 
 ```text
-VIDEO_MODEL_HINT=
-REMOTE_MEDIA_ALLOWED_HOSTS=
+REMOTE_MEDIA_ALLOWED_HOSTS=media.example.com,cdn.example.com
 ```
 
-Leave `VIDEO_MODEL_HINT` blank initially so OpenArt/Claude can choose an available model. Leave the media hostname allowlist blank for the first controlled test, then restrict it after observing the actual OpenArt/CDN output hosts.
+The example hostnames above are placeholders, not OpenArt endpoints. Obtain the actual trusted media/CDN hosts from provider documentation or a controlled provider response, verify them, then list only those hostnames. Do not use `*`, do not add URL schemes/paths, and do not leave the allowlist blank when using a remote video provider.
+
+Each redirect is validated again. HTTPS, explicit host matching, DNS/private-network checks, content-type checks, and stream-size limits remain enforced.
+
+`VIDEO_MODEL_HINT` can remain blank unless a specific available model is intentionally selected.
+
+After editing `.env`, reload the app and worker environment.
 
 ## 5. Google / YouTube OAuth
 
-Create or select a project in Google Cloud Console.
-
-Enable:
+Create or select a project in Google Cloud Console and enable:
 
 - YouTube Data API v3
 - YouTube Analytics API
 
 Configure the OAuth consent screen, then create an OAuth client of type `Web application`.
 
-For local testing with the default Karzoun port add this exact authorized redirect URI:
+For local testing with the default Karzoun port add this authorized redirect URI:
 
 ```text
 http://localhost:3100/api/youtube/callback
@@ -206,11 +180,9 @@ YOUTUBE_CLIENT_ID=
 YOUTUBE_CLIENT_SECRET=
 ```
 
-After editing `.env`, run `scripts/reload-env.ps1`.
+Do not manually create or paste a YouTube refresh token into source files. Start the factory, open `/setup` or `/settings`, and press `Connect YouTube` for each factory channel. The app performs OAuth and stores the refresh token encrypted with `APP_SECRET`.
 
-Do not manually create or paste a YouTube refresh token. Start the factory, open `/setup` or `/settings`, and press `Connect YouTube` for each factory channel. The app performs OAuth and stores the refresh token encrypted with `APP_SECRET`.
-
-If the authorized Google account exposes more than one owned YouTube channel, the factory shows an explicit channel picker instead of silently binding the first result. This is important when Karzoun Media Lab and the kids channel are under the same Google account.
+If the authorized Google account exposes more than one owned YouTube channel, the factory shows an explicit channel picker instead of silently binding the first result.
 
 First real upload settings:
 
@@ -232,7 +204,7 @@ Create the kids channel in YouTube first. Then inside Karzoun Media Factory:
 4. Press `Connect YouTube` for that factory channel.
 5. Pick the exact kids YouTube channel if the Google account exposes multiple channels.
 
-Keep Kids Autopilot disabled initially. Kids jobs are routed separately and automatically send YouTube's Made for Kids declaration.
+Keep Kids Autopilot disabled initially. Kids jobs are routed separately and send YouTube's Made for Kids declaration.
 
 ## 7. Final activation order
 
@@ -241,15 +213,16 @@ Use `/setup` as the checklist. The safe order is:
 1. Safe local mock factory.
 2. Install/verify the 1,000-prompt bank.
 3. Telegram test.
-4. Claude credentials configured, paid rendering still locked.
-5. OpenArt OAuth token configured, paid rendering still locked.
-6. One manual paid render.
-7. Review that render.
-8. YouTube OAuth connection for the exact GENERAL channel.
-9. One PRIVATE upload.
-10. Create/connect the kids channel separately.
-11. Verify analytics.
-12. Only then consider paid Autopilot or PUBLIC publishing.
+4. AI credentials configured, paid rendering still locked.
+5. OpenArt OAuth configured, paid rendering still locked.
+6. Explicit trusted remote-media hosts configured.
+7. One manual paid render.
+8. Review that render.
+9. YouTube OAuth connection for the exact GENERAL channel.
+10. One PRIVATE upload.
+11. Create/connect the kids channel separately.
+12. Verify analytics.
+13. Only then consider paid Autopilot or PUBLIC publishing.
 
 Emergency stop at any time:
 
