@@ -8,7 +8,11 @@ COPY package.json package-lock.json .npmrc ./
 COPY prisma ./prisma
 RUN npm ci --include=dev
 
-COPY . .
+COPY app ./app
+COPY public ./public
+COPY scripts ./scripts
+COPY src ./src
+COPY middleware.ts next.config.mjs tsconfig.json next-env.d.ts eslint.config.mjs ./
 RUN npx prisma generate && npm run validate && mkdir -p /app/media && chown node:node /app/media
 
 ENV NODE_ENV=production
