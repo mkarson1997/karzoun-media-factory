@@ -15,6 +15,12 @@ describe('runtime readiness', () => {
     ALLOW_PUBLIC_PUBLISHING: 'false'
   } as NodeJS.ProcessEnv;
 
+  const openArtBase = {
+    ...base,
+    VIDEO_PROVIDER: 'openart-mcp',
+    REMOTE_MEDIA_ALLOWED_HOSTS: 'media.example.com,cdn.example.com'
+  } as NodeJS.ProcessEnv;
+
   it('accepts a locked-down production configuration', () => {
     expect(readinessSummary(evaluateRuntimeSafety(base)).ready).toBe(true);
   });
@@ -26,23 +32,29 @@ describe('runtime readiness', () => {
   });
 
   it('does not require an AI bridge for direct OpenArt MCP', () => {
-    const checks = evaluateRuntimeSafety({ ...base, VIDEO_PROVIDER: 'openart-mcp', AI_PROVIDER: 'openai' });
+    const checks = evaluateRuntimeSafety({ ...openArtBase, AI_PROVIDER: 'openai' });
     expect(readinessSummary(checks).ready).toBe(true);
     expect(checks.find((item) => item.name === 'OpenArt MCP configuration')?.detail).toMatch(/no AI bridge/i);
   });
 
+  it('requires an explicit host allowlist before remote generated media can be ingested', () => {
+    const checks = evaluateRuntimeSafety({ ...base, VIDEO_PROVIDER: 'openart-mcp' });
+    expect(readinessSummary(checks).ready).toBe(false);
+    expect(checks.find((item) => item.name === 'Remote media host allowlist')?.ok).toBe(false);
+  });
+
   it('accepts OpenAI as an optional creative director with direct OpenArt MCP', () => {
     const checks = evaluateRuntimeSafety({
-      ...base,
+      ...openArtBase,
       AI_PROVIDER: 'openai',
       CREATIVE_DIRECTOR: 'openai',
       OPENAI_API_KEY: 'test-key',
-      OPENAI_MODEL: 'gpt-5.6-terra',
-      VIDEO_PROVIDER: 'openart-mcp'
+      OPENAI_MODEL: 'gpt-5.6-terra'
     });
     expect(readinessSummary(checks).ready).toBe(true);
     expect(checks.find((item) => item.name === 'AI creative director')?.ok).toBe(true);
     expect(checks.find((item) => item.name === 'OpenArt MCP configuration')?.ok).toBe(true);
+    expect(checks.find((item) => item.name === 'Remote media host allowlist')?.ok).toBe(true);
   });
 
   it('rejects autopilot paid unlock unless general paid generation and a real provider are enabled', () => {
@@ -53,12 +65,11 @@ describe('runtime readiness', () => {
 
   it('accepts the autopilot paid unlock with OpenAI and a configured real provider', () => {
     const checks = evaluateRuntimeSafety({
-      ...base,
+      ...openArtBase,
       AI_PROVIDER: 'openai',
       CREATIVE_DIRECTOR: 'openai',
       OPENAI_API_KEY: 'test-key',
       OPENAI_MODEL: 'gpt-5.6-terra',
-      VIDEO_PROVIDER: 'openart-mcp',
       ALLOW_PAID_GENERATION: 'true',
       ALLOW_AUTOPILOT_PAID_GENERATION: 'true'
     });
