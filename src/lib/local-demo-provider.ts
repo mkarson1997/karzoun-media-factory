@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { CreativePlan } from './creative-director';
+import { creativePlanSchema, type CreativePlan } from './creative-director';
 import { ensureLocalMediaRoot, localMediaFilename, localMediaUrl, resolveLocalMediaPath } from './local-media';
 import type { VideoGenerationProvider, VideoGenerationRequest, VideoGenerationResult } from './providers';
 
@@ -28,7 +28,17 @@ function filterPath(value: string) {
   return value.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
 }
 
+function boundedSecond(value: number, durationSeconds: number) {
+  if (!Number.isFinite(value)) throw new Error('Local renderer received a non-finite timeline value');
+  return Math.max(0, Math.min(durationSeconds, value));
+}
+
 export function localDemoFilter(plan: CreativePlan, textFiles: string[], durationSeconds: number) {
+  if (!Number.isFinite(durationSeconds) || durationSeconds < 3 || durationSeconds > 180) {
+    throw new Error('Local renderer duration must be between 3 and 180 seconds');
+  }
+  if (textFiles.length !== plan.shots.length + 1) throw new Error('Local renderer caption files do not match the validated plan');
+
   const filters = [
     `drawbox=x='mod(t*55\\,${WIDTH + 280})-280':y=80:w=280:h=280:color=0x6366f1@0.22:t=fill`,
     `drawbox=x='${WIDTH}-mod(t*38\\,${WIDTH + 360})':y=780:w=360:h=360:color=0x06b6d4@0.18:t=fill`,
@@ -37,8 +47,9 @@ export function localDemoFilter(plan: CreativePlan, textFiles: string[], duratio
   ];
   const palette = ['0x312e81', '0x164e63', '0x3f1d58', '0x713f12', '0x134e4a', '0x4c1d95'];
   plan.shots.forEach((shot, index) => {
-    const start = Math.max(0, shot.startSecond);
-    const end = Math.min(durationSeconds, shot.endSecond);
+    const start = boundedSecond(shot.startSecond, durationSeconds);
+    const end = boundedSecond(shot.endSecond, durationSeconds);
+    if (end <= start) throw new Error('Local renderer received an invalid shot range');
     filters.push(`drawbox=x=0:y=0:w=iw:h=ih:color=${palette[index % palette.length]}@0.20:t=fill:enable='between(t\\,${start}\\,${end})'`);
     filters.push(`drawtext=fontfile='${FONT}':textfile='${filterPath(textFiles[index + 1])}':fontcolor=white:fontsize=38:line_spacing=10:x=(w-text_w)/2:y=900:box=1:boxcolor=black@0.68:boxborderw=22:enable='between(t\\,${start}\\,${end})'`);
     filters.push(`drawtext=fontfile='${FONT}':text='${String(index + 1).padStart(2, '0')}':fontcolor=white@0.52:fontsize=24:x=64:y=1080:enable='between(t\\,${start}\\,${end})'`);
@@ -49,7 +60,7 @@ export function localDemoFilter(plan: CreativePlan, textFiles: string[], duratio
 
 async function runFfmpeg(args: string[]) {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'], shell: false });
     let stderr = '';
     child.stderr.on('data', (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-5000); });
     child.once('error', reject);
@@ -58,9 +69,13 @@ async function runFfmpeg(args: string[]) {
 }
 
 function parsePlan(input: VideoGenerationRequest) {
-  const parsed = JSON.parse(input.prompt) as CreativePlan;
-  if (!Array.isArray(parsed.shots) || parsed.shots.length < 2) throw new Error('Local renderer requires a valid creative plan');
-  return parsed;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input.prompt);
+  } catch {
+    throw new Error('Local renderer requires a valid JSON creative plan');
+  }
+  return creativePlanSchema.parse(parsed);
 }
 
 export class LocalDemoVideoProvider implements VideoGenerationProvider {
@@ -79,7 +94,9 @@ export class LocalDemoVideoProvider implements VideoGenerationProvider {
         await writeFile(filename, caption, 'utf8');
         return filename;
       }));
-      const duration = Math.max(3, Math.min(180, input.durationSeconds));
+      const requestedDuration = Number(input.durationSeconds);
+      if (!Number.isFinite(requestedDuration)) throw new Error('Local renderer requires a finite duration');
+      const duration = Math.max(3, Math.min(180, requestedDuration));
       await runFfmpeg([
         '-hide_banner', '-loglevel', 'warning', '-y',
         '-f', 'lavfi', '-i', `color=c=0x07101f:s=${WIDTH}x${HEIGHT}:r=30:d=${duration}`,
