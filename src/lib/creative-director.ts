@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { createOpenAIResponse, getOpenAIOutputText, responsesProviderConfigured, selectedOpenAIModel } from './openai-responses';
+import { trustedOllamaUrl } from './ollama-network-policy';
 import { assertExternalCreativeAllowed, zeroCostMode } from './zero-cost';
 
 export const creativePlanSchema = z.object({
@@ -168,15 +169,11 @@ export function isLocalOllamaModel(model: OllamaModelInfo) {
   return Boolean(name && !model.remote_model && !name.endsWith(':cloud') && !/embed/i.test(name) && (model.size ?? 0) > 1_000_000);
 }
 
-function ollamaBaseUrl() {
-  return (process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434').replace(/\/$/, '');
-}
-
 export class OllamaCreativeDirector implements CreativeDirector {
   constructor(private readonly request: FetchLike = fetch) {}
 
   private async selectModel() {
-    const response = await this.request(`${ollamaBaseUrl()}/api/tags`, { signal: AbortSignal.timeout(5000) });
+    const response = await this.request(trustedOllamaUrl('/api/tags', process.env.OLLAMA_BASE_URL), { signal: AbortSignal.timeout(5000) });
     if (!response.ok) throw new Error(`Ollama model discovery returned HTTP ${response.status}`);
     const payload = await response.json() as { models?: OllamaModelInfo[] };
     const localModels = payload.models?.filter(isLocalOllamaModel) ?? [];
@@ -193,7 +190,7 @@ export class OllamaCreativeDirector implements CreativeDirector {
 
   async prepare(input: CreativeDirectorInput): Promise<CreativeDirectorResult> {
     const model = await this.selectModel();
-    const response = await this.request(`${ollamaBaseUrl()}/api/generate`, {
+    const response = await this.request(trustedOllamaUrl('/api/generate', process.env.OLLAMA_BASE_URL), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, system: CREATIVE_SYSTEM, prompt: creativePrompt(input), stream: false, format: 'json', options: { temperature: 0.2 } }),
