@@ -1,7 +1,8 @@
 import { Client, StreamableHTTPClientTransport, type CallToolResult, type Tool } from '@modelcontextprotocol/client';
 import { getOpenArtAccessToken } from './openart-oauth';
+import { DEFAULT_OPENART_MCP_URL, trustedOpenArtMcpUrl } from './openart-network-policy';
 
-export const DEFAULT_OPENART_MCP_URL = 'https://mcp.openart.ai/mcp';
+export { DEFAULT_OPENART_MCP_URL } from './openart-network-policy';
 
 export type OpenArtTool = Tool;
 export type OpenArtToolResult = CallToolResult;
@@ -12,9 +13,7 @@ export class OpenArtMcpClient {
 
   async connect() {
     if (this.client) return this.client;
-    const endpoint = process.env.OPENART_MCP_URL || DEFAULT_OPENART_MCP_URL;
-    const url = new URL(endpoint);
-    if (url.protocol !== 'https:') throw new Error('OpenArt MCP URL must use HTTPS');
+    const url = trustedOpenArtMcpUrl(process.env.OPENART_MCP_URL || DEFAULT_OPENART_MCP_URL);
 
     const client = new Client({ name: 'karzoun-media-factory', version: '0.1.0' });
     const transport = new StreamableHTTPClientTransport(url, {

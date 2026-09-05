@@ -1,3 +1,4 @@
+import { trustedOpenArtTokenEndpoint } from './openart-network-policy';
 import { readIntegrationSecret, storeIntegrationSecret } from './secret-store';
 
 const OPENART_OAUTH_PROVIDER = 'openart-mcp-oauth';
@@ -21,10 +22,24 @@ type TokenResponse = {
   expires_in?: number;
 };
 
+function optionalString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
 function parseStoredCredential(raw: string): OpenArtOAuthCredential | null {
   try {
-    const value = JSON.parse(raw) as OpenArtOAuthCredential;
-    return value && typeof value === 'object' ? value : null;
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return {
+      accessToken: optionalString(value.accessToken),
+      refreshToken: optionalString(value.refreshToken),
+      clientId: optionalString(value.clientId),
+      clientSecret: optionalString(value.clientSecret),
+      tokenEndpoint: optionalString(value.tokenEndpoint),
+      scope: optionalString(value.scope),
+      tokenEndpointAuthMethod: optionalString(value.tokenEndpointAuthMethod),
+      expiresAt: optionalString(value.expiresAt)
+    };
   } catch {
     return null;
   }
@@ -55,16 +70,31 @@ async function readCredential(): Promise<OpenArtOAuthCredential> {
   return envCredential();
 }
 
+function normalizedCredential(credential: OpenArtOAuthCredential): OpenArtOAuthCredential {
+  const tokenEndpoint = credential.tokenEndpoint
+    ? trustedOpenArtTokenEndpoint(credential.tokenEndpoint).toString()
+    : undefined;
+  return {
+    accessToken: optionalString(credential.accessToken),
+    refreshToken: optionalString(credential.refreshToken),
+    clientId: optionalString(credential.clientId),
+    clientSecret: optionalString(credential.clientSecret),
+    tokenEndpoint,
+    scope: optionalString(credential.scope),
+    tokenEndpointAuthMethod: optionalString(credential.tokenEndpointAuthMethod),
+    expiresAt: optionalString(credential.expiresAt)
+  };
+}
+
 async function persistCredential(credential: OpenArtOAuthCredential) {
-  const tokenEndpointHost = credential.tokenEndpoint
-    ? (() => {
-        try { return new URL(credential.tokenEndpoint).host; } catch { return null; }
-      })()
+  const normalized = normalizedCredential(credential);
+  const tokenEndpointHost = normalized.tokenEndpoint
+    ? new URL(normalized.tokenEndpoint).host
     : null;
 
-  await storeIntegrationSecret(OPENART_OAUTH_PROVIDER, JSON.stringify(credential), {
+  await storeIntegrationSecret(OPENART_OAUTH_PROVIDER, JSON.stringify(normalized), {
     source: 'openart-oauth-refresh',
-    hasRefreshToken: Boolean(credential.refreshToken),
+    hasRefreshToken: Boolean(normalized.refreshToken),
     tokenEndpointHost,
     refreshedAt: new Date().toISOString()
   });
@@ -73,6 +103,7 @@ async function persistCredential(credential: OpenArtOAuthCredential) {
 function refreshRequest(credential: OpenArtOAuthCredential) {
   if (!credential.refreshToken || !credential.tokenEndpoint || !credential.clientId) return null;
 
+  const tokenEndpoint = trustedOpenArtTokenEndpoint(credential.tokenEndpoint);
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     refresh_token: credential.refreshToken,
@@ -89,7 +120,7 @@ function refreshRequest(credential: OpenArtOAuthCredential) {
     body.set('client_secret', credential.clientSecret);
   }
 
-  return { body, headers };
+  return { body, headers, tokenEndpoint };
 }
 
 export async function getOpenArtAccessToken(options?: { forceRefresh?: boolean }): Promise<string | null> {
@@ -101,11 +132,12 @@ export async function getOpenArtAccessToken(options?: { forceRefresh?: boolean }
   if (!options?.forceRefresh && credential.accessToken && expiresAt > Date.now() + 60_000) return credential.accessToken;
 
   try {
-    const response = await fetch(credential.tokenEndpoint!, {
+    const response = await fetch(refresh.tokenEndpoint, {
       method: 'POST',
       headers: refresh.headers,
       body: refresh.body,
-      signal: AbortSignal.timeout(15_000)
+      signal: AbortSignal.timeout(15_000),
+      redirect: 'error'
     });
 
     if (!response.ok) {
@@ -136,11 +168,22 @@ export async function getOpenArtAccessToken(options?: { forceRefresh?: boolean }
 }
 
 export async function storeOpenArtOAuthCredential(credential: OpenArtOAuthCredential) {
-  if (!credential.accessToken && !credential.refreshToken) throw new Error('OpenArt OAuth credential requires an access token or refresh token');
+  if (!credential.accessToken && !credential.refreshToken) {
+    throw new Error('OpenArt OAuth credential requires an access token or refresh token');
+  }
+  if (credential.refreshToken && (!credential.clientId || !credential.tokenEndpoint)) {
+    throw new Error('Refresh-capable OpenArt OAuth credentials require clientId and tokenEndpoint');
+  }
   await persistCredential(credential);
 }
 
 export async function hasDurableOpenArtOAuthCredential() {
   const credential = await readCredential();
-  return Boolean(credential.refreshToken && credential.clientId && credential.tokenEndpoint);
+  if (!credential.refreshToken || !credential.clientId || !credential.tokenEndpoint) return false;
+  try {
+    trustedOpenArtTokenEndpoint(credential.tokenEndpoint);
+    return true;
+  } catch {
+    return false;
+  }
 }
