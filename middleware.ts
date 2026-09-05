@@ -1,20 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { trustedAppUrl } from './src/lib/app-origin';
 import { deriveSessionToken } from './src/lib/session-token';
-
-function loginUrl(request: NextRequest) {
-  const configured = process.env.APP_BASE_URL;
-  if (configured) {
-    try {
-      const base = new URL(configured);
-      if (!base.username && !base.password && (base.protocol === 'https:' || process.env.NODE_ENV !== 'production')) {
-        return new URL('/login', base);
-      }
-    } catch {
-      // Fail closed below in production; development may use the request origin.
-    }
-  }
-  return new URL('/login', request.url);
-}
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -44,11 +30,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Authentication required' }, { status: 401 });
   }
 
-  if (process.env.NODE_ENV === 'production' && !process.env.APP_BASE_URL) {
-    return new NextResponse('APP_BASE_URL must be configured before exposing the dashboard.', { status: 503 });
+  let login: URL;
+  try {
+    login = trustedAppUrl('/login');
+  } catch {
+    return new NextResponse('APP_BASE_URL must be safely configured before exposing the dashboard.', { status: 503 });
   }
-
-  const login = loginUrl(request);
   login.searchParams.set('next', pathname);
   return NextResponse.redirect(login);
 }
