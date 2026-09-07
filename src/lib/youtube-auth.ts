@@ -26,8 +26,6 @@ async function readRefreshToken(factoryChannelId?: string) {
     const specific = await readIntegrationSecret(credentialKey(factoryChannelId));
     if (specific) return specific.secret;
 
-    // Backward compatibility for the original GENERAL channel created before
-    // channel-specific OAuth existed. KIDS channels never fall back to it.
     const channel = await prisma.channel.findUnique({ where: { id: factoryChannelId }, select: { type: true } });
     if (channel?.type === 'GENERAL') {
       const legacy = await readIntegrationSecret('youtube-refresh-token');
@@ -59,7 +57,8 @@ export function createYouTubeAuthorizationUrl(state: string) {
 
 export async function exchangeYouTubeAuthorizationCode(code: string, factoryChannelId?: string) {
   const client = createYouTubeOAuthClient();
-  const { tokens } = await client.getToken(code);
+  const authorizationCode = code;
+  const { tokens } = await client.getToken(authorizationCode);
   if (!tokens.refresh_token) {
     const existing = await readRefreshToken(factoryChannelId);
     if (!existing) throw new Error('Google did not return a refresh token. Reconnect YouTube and approve offline access');
