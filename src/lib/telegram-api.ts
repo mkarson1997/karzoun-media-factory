@@ -3,7 +3,8 @@ export async function sendTelegramNotification(text: string): Promise<boolean> {
   const chatId = process.env.TELEGRAM_ALLOWED_USER_ID;
   if (!token || !chatId) return false;
 
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const endpoint = `https://api.telegram.org/bot${token}/sendMessage`;
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true })
