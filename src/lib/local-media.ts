@@ -11,9 +11,9 @@ export function localMediaRoot(env: NodeJS.ProcessEnv = process.env) {
 export function resolveLocalMediaPath(filename: string, env: NodeJS.ProcessEnv = process.env) {
   if (!LOCAL_MEDIA_NAME.test(filename)) throw new Error('Invalid local media filename');
   const root = localMediaRoot(env);
-  const resolved = path.resolve(root, filename);
-  if (path.dirname(resolved) !== root) throw new Error('Local media path escaped its storage root');
-  return resolved;
+  const resolvedPath = path.resolve(root, filename);
+  if (path.dirname(resolvedPath) !== root) throw new Error('Local media path escaped its storage root');
+  return resolvedPath;
 }
 
 export function localMediaUrl(filename: string) {
@@ -39,5 +39,6 @@ export async function openLocalMedia(value: string) {
   const filePath = resolveLocalMediaPath(filename);
   const fileStat = await stat(filePath);
   if (!fileStat.isFile() || fileStat.size < 1024) throw new Error('Local media asset is missing or empty');
-  return { filename, filePath, size: fileStat.size, stream: createReadStream(filePath) };
+  const stream = createReadStream(filePath);
+  return { filename, filePath, size: fileStat.size, stream };
 }
