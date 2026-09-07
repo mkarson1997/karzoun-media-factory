@@ -117,7 +117,8 @@ export function pinnedRemoteRequestOptions(target: VettedRemoteTarget): RequestO
 
 function requestPinnedRemote(target: VettedRemoteTarget) {
   return new Promise<IncomingMessage>((resolve, reject) => {
-    const request = https.request(pinnedRemoteRequestOptions(target), resolve);
+    const requestOptions = pinnedRemoteRequestOptions(target);
+    const request = https.request(requestOptions, resolve);
     request.setTimeout(REQUEST_TIMEOUT_MS, () => {
       request.destroy(new Error('Remote media request timed out'));
     });
