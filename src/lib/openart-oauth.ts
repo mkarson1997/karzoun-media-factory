@@ -132,7 +132,8 @@ export async function getOpenArtAccessToken(options?: { forceRefresh?: boolean }
   if (!options?.forceRefresh && credential.accessToken && expiresAt > Date.now() + 60_000) return credential.accessToken;
 
   try {
-    const response = await fetch(refresh.tokenEndpoint, {
+    const trustedEndpoint = refresh.tokenEndpoint;
+    const response = await fetch(trustedEndpoint, {
       method: 'POST',
       headers: refresh.headers,
       body: refresh.body,
