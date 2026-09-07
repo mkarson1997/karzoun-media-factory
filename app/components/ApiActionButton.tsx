@@ -23,7 +23,8 @@ export function ApiActionButton({ endpoint, body, label, confirmText, className 
     setError(null);
     setSuccess(false);
     try {
-      const response = await fetch(endpoint, {
+      const endpointUrl = endpoint;
+      const response = await fetch(endpointUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body)
@@ -39,14 +40,15 @@ export function ApiActionButton({ endpoint, body, label, confirmText, className 
     }
   }
 
+  const successTarget = successHref;
   return (
     <span className="action-wrap">
       <button className={className} type="button" onClick={run} disabled={busy || success}>
         {busy ? 'Working…' : success && successText ? 'Done ✓' : label}
       </button>
       {success && successText ? (
-        successHref
-          ? <a className="action-success" href={successHref}>{successText}</a>
+        successTarget
+          ? <a className="action-success" href={successTarget}>{successText}</a>
           : <small className="action-success">{successText}</small>
       ) : null}
       {error ? <small className="action-error">{error}</small> : null}
