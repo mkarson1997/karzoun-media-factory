@@ -3,9 +3,8 @@ import { trustedAppBaseUrl } from './app-origin';
 
 export function assertSameOriginMutation(request: NextRequest) {
   const origin = request.headers.get('origin');
-  if (!origin) return;
   const expected = trustedAppBaseUrl().origin;
-  if (origin !== expected) {
+  if (!origin || origin !== expected) {
     throw new Error('Cross-origin mutation rejected');
   }
 }
