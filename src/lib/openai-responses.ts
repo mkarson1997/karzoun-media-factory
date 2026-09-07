@@ -57,10 +57,6 @@ function normalizePayload(payload: OpenAIResponsePayload, provider: ResponsesPro
   if (provider !== 'groq') return payload;
 
   const normalized = { ...payload };
-
-  // Groq's Responses-compatible endpoint is not feature-identical to OpenAI's.
-  // In particular, models such as qwen/qwen3.6-27b reject reasoning.effort.
-  // Strip OpenAI-only response controls before sending the request to Groq.
   delete normalized.reasoning;
 
   if (normalized.text && typeof normalized.text === 'object' && !Array.isArray(normalized.text)) {
@@ -76,18 +72,8 @@ function normalizePayload(payload: OpenAIResponsePayload, provider: ResponsesPro
   if (hasRemoteMcp && typeof normalized.max_output_tokens === 'number') {
     const configuredCap = Number(process.env.GROQ_MCP_REQUEST_OUTPUT_CAP);
     const allowedToolCount = remoteMcpAllowedToolCount(normalized);
-
-    // Unfiltered remote MCP injects every server tool schema into the model
-    // context. Groq Free currently gives the MCP-capable models an 8k TPM
-    // budget, so unfiltered requests need a small completion reserve. Once the
-    // OpenArt adapter has discovered and narrowed the server to a handful of
-    // generation tools, there is enough room for a longer multi-step render.
-    const automaticCap = allowedToolCount !== null && allowedToolCount > 0 && allowedToolCount <= 8
-      ? 3200
-      : 1750;
-    const safeCap = Number.isFinite(configuredCap) && configuredCap >= 800 && configuredCap <= 6000
-      ? Math.floor(configuredCap)
-      : automaticCap;
+    const automaticCap = allowedToolCount !== null && allowedToolCount > 0 && allowedToolCount <= 8 ? 3200 : 1750;
+    const safeCap = Number.isFinite(configuredCap) && configuredCap >= 800 && configuredCap <= 6000 ? Math.floor(configuredCap) : automaticCap;
     normalized.max_output_tokens = Math.min(normalized.max_output_tokens, safeCap);
   }
 
@@ -117,7 +103,8 @@ export async function createOpenAIResponse(payload: OpenAIResponsePayload, provi
   const maxAttempts = options?.maxAttempts ?? (config.provider === 'groq' ? 3 : 1);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = await fetch(config.endpoint, {
+    const endpoint = config.endpoint;
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
