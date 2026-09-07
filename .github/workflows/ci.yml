@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   verify:
@@ -185,7 +184,10 @@ jobs:
 
           echo "semgrep_exit_status=$status"
 
-      - name: Publish safe diagnostic metadata
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f body="$(cat diagnostic-comment.md)"
+      - name: Upload diagnostic artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-diagnostic
+          path: diagnostic-comment.md
+          if-no-files-found: error
+          retention-days: 1
