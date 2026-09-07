@@ -8,7 +8,8 @@ const GCM_AUTH_TAG_LENGTH_BYTES = 16;
 function encryptionKey() {
   const secret = process.env.APP_SECRET;
   if (!secret || secret.length < 16) throw new Error('APP_SECRET must be configured with at least 16 characters before storing integration credentials');
-  return createHash('sha256').update(`karzoun-media-factory:credentials:v1:${secret}`).digest();
+  const keyMaterial = `karzoun-media-factory:credentials:v1:${secret}`;
+  return createHash('sha256').update(keyMaterial).digest();
 }
 
 export async function storeIntegrationSecret(provider: string, secret: string, metadata?: Prisma.InputJsonValue) {
