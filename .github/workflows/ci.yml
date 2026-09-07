@@ -12,20 +12,72 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Resolve production image inputs
+      - name: Query public Sonar security inventory safely
         shell: bash
         run: |
-          set -euo pipefail
-          docker pull node:24-alpine >/dev/null
-          {
-            echo "NODE_IMAGE=$(docker image inspect node:24-alpine --format '{{index .RepoDigests 0}}')"
-            docker run --rm node:24-alpine sh -lc 'echo ALPINE_VERSION=$(cat /etc/alpine-release); apk policy ffmpeg font-dejavu'
-          } | tee docker-inputs.txt
+          python - <<'PY'
+          import json
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
 
-      - name: Upload production image metadata
+          base = 'https://sonarcloud.io'
+          project = 'mkarson1997_karzoun-media-factory'
+          queries = {
+              'all_open': ('/api/issues/search', {'componentKeys': project, 'branch': 'main', 'resolved': 'false', 'ps': '500'}),
+              'all_any_status': ('/api/issues/search', {'componentKeys': project, 'branch': 'main', 'ps': '500'}),
+              'security_impact': ('/api/issues/search', {'componentKeys': project, 'branch': 'main', 'impactSoftwareQualities': 'SECURITY', 'ps': '500'}),
+              'legacy_vulnerabilities': ('/api/issues/search', {'componentKeys': project, 'branch': 'main', 'types': 'VULNERABILITY', 'ps': '500'}),
+              'hotspots': ('/api/hotspots/search', {'projectKey': project, 'branch': 'main', 'ps': '500'}),
+          }
+          out = {}
+          for name, (path, params) in queries.items():
+              url = base + path + '?' + urllib.parse.urlencode(params)
+              try:
+                  with urllib.request.urlopen(url, timeout=30) as response:
+                      payload = json.load(response)
+                  safe = {'total': payload.get('total'), 'paging': payload.get('paging')}
+                  if 'issues' in payload:
+                      safe['issues'] = [
+                          {
+                              'key': i.get('key'),
+                              'rule': i.get('rule'),
+                              'component': i.get('component'),
+                              'line': i.get('line'),
+                              'message': i.get('message'),
+                              'severity': i.get('severity'),
+                              'type': i.get('type'),
+                              'status': i.get('status'),
+                              'issueStatus': i.get('issueStatus'),
+                              'impacts': i.get('impacts'),
+                          }
+                          for i in (payload.get('issues') or [])[:100]
+                      ]
+                  if 'hotspots' in payload:
+                      safe['hotspots'] = [
+                          {
+                              'key': h.get('key'),
+                              'ruleKey': h.get('ruleKey'),
+                              'component': h.get('component'),
+                              'line': h.get('line'),
+                              'message': h.get('message'),
+                              'status': h.get('status'),
+                              'vulnerabilityProbability': h.get('vulnerabilityProbability'),
+                          }
+                          for h in (payload.get('hotspots') or [])[:100]
+                      ]
+                  out[name] = safe
+              except Exception as exc:
+                  out[name] = {'error': f'{type(exc).__name__}: {exc}'}
+
+          Path('sonar-inventory.json').write_text(json.dumps(out, indent=2, sort_keys=True), encoding='utf-8')
+          print(json.dumps({k: {'total': v.get('total'), 'paging': v.get('paging'), 'error': v.get('error')} for k, v in out.items()}, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload Sonar inventory
         uses: actions/upload-artifact@v4
         with:
-          name: docker-inputs
-          path: docker-inputs.txt
+          name: sonar-inventory
+          path: sonar-inventory.json
           if-no-files-found: error
           retention-days: 1
