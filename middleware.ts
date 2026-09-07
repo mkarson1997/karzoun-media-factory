@@ -24,7 +24,8 @@ export async function middleware(request: NextRequest) {
   }
 
   const expected = await deriveSessionToken(secret);
-  if (request.cookies.get('kmf_session')?.value === expected) return NextResponse.next();
+  const suppliedSession = request.cookies.get('kmf_session')?.value;
+  if (suppliedSession === expected) return NextResponse.next();
 
   if (pathname.startsWith('/api/')) {
     return NextResponse.json({ ok: false, error: 'Authentication required' }, { status: 401 });
