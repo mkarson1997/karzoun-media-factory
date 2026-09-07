@@ -1,8 +1,10 @@
-FROM node:24-alpine
+FROM node:24-alpine AS runtime
 
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN apk add --no-cache ffmpeg font-dejavu
+RUN apk add --no-cache \
+    ffmpeg \
+    font-dejavu
 
 COPY package.json package-lock.json .npmrc ./
 COPY prisma ./prisma
