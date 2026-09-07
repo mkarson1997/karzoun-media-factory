@@ -47,9 +47,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.redirect(target, 303);
   }
 
-  const response = NextResponse.redirect(trustedAppUrl(nextPath), 303);
+  const redirectTarget = trustedAppUrl(nextPath);
+  const response = NextResponse.redirect(redirectTarget, 303);
   response.headers.set('cache-control', 'no-store');
-  response.cookies.set('kmf_session', await deriveSessionToken(configured), {
+  const sessionToken = await deriveSessionToken(configured);
+  response.cookies.set('kmf_session', sessionToken, {
     httpOnly: true,
     secure: baseUrl.protocol === 'https:',
     sameSite: 'lax',
