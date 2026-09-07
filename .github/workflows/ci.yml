@@ -6,188 +6,27 @@ on:
 
 permissions:
   contents: read
+  checks: read
 
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install Semgrep diagnostically
-        run: python -m pip install --disable-pip-version-check --quiet semgrep
-
-      - name: Run security diagnostics
+      - name: Capture prior Sonar annotation safely
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set +e
-          semgrep scan \
-            --config p/javascript \
-            --config p/typescript \
-            --config p/security-audit \
-            --json \
-            --exclude node_modules \
-            --exclude .next \
-            --exclude coverage \
-            --exclude data \
-            --exclude media \
-            . > semgrep.json
-          status=$?
-          set -e
+          gh api "repos/${{ github.repository }}/check-runs/101809892533/annotations" \
+            --jq '[.[] | {path, start_line, end_line, annotation_level, title, message}]' \
+            > sonar-annotations.json
+          cat sonar-annotations.json
 
-          python - <<'PY'
-          import json
-          import urllib.parse
-          import urllib.request
-          from pathlib import Path
-
-          lines = ['## Security diagnostic snapshot', '']
-
-          data = json.loads(Path('semgrep.json').read_text(encoding='utf-8'))
-          results = data.get('results', [])
-          interesting_terms = (
-              'ssrf', 'server-side request', 'redirect', 'command', 'argument injection',
-              'path traversal', 'path injection', 'xss', 'cross-site scripting',
-              'sql', 'nosql', 'regex', 'redos', 'denial of service', 'eval',
-              'injection', 'prototype pollution', 'deserialization', 'crypto',
-              'cipher', 'decipher', 'random', 'secret', 'credential'
-          )
-          findings = []
-          for item in results:
-              extra = item.get('extra') or {}
-              metadata = extra.get('metadata') or {}
-              text = ' '.join([
-                  str(item.get('check_id', '')),
-                  str(extra.get('message', '')),
-                  str(metadata.get('category', '')),
-                  str(metadata.get('technology', '')),
-                  str(metadata.get('cwe', '')),
-                  str(metadata.get('owasp', '')),
-              ]).lower()
-              severity = str(extra.get('severity', '')).upper()
-              if severity in {'ERROR', 'WARNING'} or any(term in text for term in interesting_terms):
-                  findings.append({
-                      'rule': item.get('check_id'),
-                      'path': item.get('path'),
-                      'line': (item.get('start') or {}).get('line'),
-                      'severity': severity,
-                      'message': extra.get('message'),
-                      'cwe': metadata.get('cwe'),
-                      'owasp': metadata.get('owasp'),
-                  })
-
-          lines.append(f'**Semgrep:** total={len(results)}, interesting={len(findings)}')
-          for finding in findings[:20]:
-              lines.append('```json')
-              lines.append(json.dumps(finding, sort_keys=True))
-              lines.append('```')
-
-          project = 'mkarson1997_karzoun-media-factory'
-
-          def get_json(path, params):
-              url = 'https://sonarcloud.io' + path + '?' + urllib.parse.urlencode(params)
-              try:
-                  with urllib.request.urlopen(url, timeout=30) as response:
-                      return json.load(response), None
-              except Exception as exc:
-                  return None, f'{type(exc).__name__}: {exc}'
-
-          root, err = get_json('/api/measures/component', {
-              'component': project,
-              'branch': 'main',
-              'metricKeys': 'security_rating,new_security_rating,vulnerabilities,new_vulnerabilities',
-          })
-          if err:
-              lines.append(f'**Sonar root measures error:** `{err}`')
-          else:
-              measures = {
-                  m.get('metric'): {'value': m.get('value'), 'period': m.get('period')}
-                  for m in (root.get('component', {}).get('measures') or [])
-              }
-              lines.append('**Sonar root measures:**')
-              lines.append('```json')
-              lines.append(json.dumps(measures, sort_keys=True))
-              lines.append('```')
-
-          tree, err = get_json('/api/measures/component_tree', {
-              'component': project,
-              'branch': 'main',
-              'metricKeys': 'security_rating,new_security_rating,vulnerabilities,new_vulnerabilities',
-              'qualifiers': 'FIL',
-              'ps': '500',
-          })
-          if err:
-              lines.append(f'**Sonar file measures error:** `{err}`')
-          else:
-              risky = []
-              for component in tree.get('components', []) or []:
-                  metrics = {}
-                  for m in component.get('measures') or []:
-                      metrics[m.get('metric')] = {'value': m.get('value'), 'period': m.get('period')}
-                  def numeric(metric, period=False):
-                      entry = metrics.get(metric) or {}
-                      raw = (entry.get('period') or {}).get('value') if period else entry.get('value')
-                      try:
-                          return float(raw)
-                      except (TypeError, ValueError):
-                          return None
-                  nsr = numeric('new_security_rating', period=True)
-                  nvu = numeric('new_vulnerabilities', period=True)
-                  sr = numeric('security_rating')
-                  vu = numeric('vulnerabilities')
-                  if (nsr is not None and nsr > 1) or (nvu is not None and nvu > 0) or (sr is not None and sr > 1) or (vu is not None and vu > 0):
-                      risky.append({
-                          'path': component.get('path'),
-                          'key': component.get('key'),
-                          'measures': metrics,
-                      })
-              lines.append(f'**Sonar risky files:** {len(risky)}')
-              for item in risky[:50]:
-                  lines.append('```json')
-                  lines.append(json.dumps(item, sort_keys=True))
-                  lines.append('```')
-
-          issues, err = get_json('/api/issues/search', {
-              'componentKeys': project,
-              'branch': 'main',
-              'impactSoftwareQualities': 'SECURITY',
-              'issueStatuses': 'OPEN,CONFIRMED',
-              'ps': '100',
-          })
-          if err:
-              lines.append(f'**Sonar issues query error:** `{err}`')
-          else:
-              safe_issues = []
-              for issue in issues.get('issues', []) or []:
-                  safe_issues.append({
-                      'rule': issue.get('rule'),
-                      'component': issue.get('component'),
-                      'line': issue.get('line'),
-                      'message': issue.get('message'),
-                      'severity': issue.get('severity'),
-                      'impacts': issue.get('impacts'),
-                  })
-              lines.append(f'**Sonar open security issues:** {len(safe_issues)}')
-              for item in safe_issues[:50]:
-                  lines.append('```json')
-                  lines.append(json.dumps(item, sort_keys=True))
-                  lines.append('```')
-
-          Path('diagnostic-comment.md').write_text('\n'.join(lines), encoding='utf-8')
-          PY
-
-          echo "semgrep_exit_status=$status"
-
-      - name: Upload diagnostic artifact
+      - name: Upload annotation artifact
         uses: actions/upload-artifact@v4
         with:
-          name: security-diagnostic
-          path: diagnostic-comment.md
+          name: sonar-annotation
+          path: sonar-annotations.json
           if-no-files-found: error
           retention-days: 1
