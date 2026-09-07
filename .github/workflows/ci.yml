@@ -6,27 +6,26 @@ on:
 
 permissions:
   contents: read
-  checks: read
 
 jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Capture prior Sonar annotation safely
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Resolve production image inputs
         shell: bash
         run: |
-          gh api "repos/${{ github.repository }}/check-runs/101809892533/annotations" \
-            --jq '[.[] | {path, start_line, end_line, annotation_level, title, message}]' \
-            > sonar-annotations.json
-          cat sonar-annotations.json
+          set -euo pipefail
+          docker pull node:24-alpine >/dev/null
+          {
+            echo "NODE_IMAGE=$(docker image inspect node:24-alpine --format '{{index .RepoDigests 0}}')"
+            docker run --rm node:24-alpine sh -lc 'echo ALPINE_VERSION=$(cat /etc/alpine-release); apk policy ffmpeg font-dejavu'
+          } | tee docker-inputs.txt
 
-      - name: Upload annotation artifact
+      - name: Upload production image metadata
         uses: actions/upload-artifact@v4
         with:
-          name: sonar-annotation
-          path: sonar-annotations.json
+          name: docker-inputs
+          path: docker-inputs.txt
           if-no-files-found: error
           retention-days: 1
