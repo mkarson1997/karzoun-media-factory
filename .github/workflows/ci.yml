@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Read PR 18 Sonar annotation
+      - name: Read source-copy Sonar annotations
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh api "repos/${{ github.repository }}/check-runs/101794092596/annotations" \
+          gh api "repos/${{ github.repository }}/check-runs/101823743364/annotations" \
             --jq '.[] | {path, start_line, end_line, annotation_level, title, message}'
