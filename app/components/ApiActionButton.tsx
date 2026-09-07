@@ -42,7 +42,7 @@
    return (
      <span className="action-wrap">
        <button className={className} type="button" onClick={run} disabled={busy || success}>
-         {busy ? 'Working…' : success && successText ? 'Done ✓' : label}
+         {(busy ? 'Working…' : success && successText ? 'Done ✓' : label)}
        </button>
        {success && successText ? (
          successHref
