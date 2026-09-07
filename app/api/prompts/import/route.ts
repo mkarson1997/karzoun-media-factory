@@ -9,8 +9,9 @@ export async function POST(request: NextRequest) {
   try {
     assertSameOriginMutation(request);
     const form = await request.formData();
-    const file = form.get('file');
-    if (!(file instanceof File)) return NextResponse.json({ ok: false, error: 'Choose a CSV file' }, { status: 400 });
+    const uploaded = form.get('file');
+    if (!(uploaded instanceof File)) return NextResponse.json({ ok: false, error: 'Choose a CSV file' }, { status: 400 });
+    const file = uploaded;
     if (!file.name.toLowerCase().endsWith('.csv')) return NextResponse.json({ ok: false, error: 'Only CSV files are accepted' }, { status: 400 });
     if (file.size > MAX_BYTES) return NextResponse.json({ ok: false, error: 'CSV exceeds the 5 MB upload limit' }, { status: 413 });
 
