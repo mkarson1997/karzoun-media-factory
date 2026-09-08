@@ -43,7 +43,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: ["sh", "-c", "npx prisma db push --skip-generate && npm run seed && npm start"]
+    command: ["sh", "-c", "./node_modules/.bin/prisma db push --skip-generate && npm run seed && npm start"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
       interval: 10s
