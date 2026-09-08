@@ -39,9 +39,9 @@ jobs:
         shell: bash
         run: |
           APP_SECRET_VALUE="$(openssl rand -hex 32)"
-          DB_PASSWORD="$(openssl rand -hex 24)"
+          DB_CREDENTIAL_VALUE="$(openssl rand -hex 24)"
           echo "APP_SECRET=$APP_SECRET_VALUE" >> "$GITHUB_ENV"
-          echo "DATABASE_URL=postgresql://kmf:$DB_PASSWORD@127.0.0.1:5432/kmf?schema=public" >> "$GITHUB_ENV"
+          printf 'DATABASE_URL=postgresql://kmf:%s@127.0.0.1:5432/kmf?schema=public\n' "$DB_CREDENTIAL_VALUE" >> "$GITHUB_ENV"
 
       - name: Build
         run: npm run build
