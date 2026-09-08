@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { ChannelType, JobStatus } from '@prisma/client';
 import { prisma } from '../src/lib/prisma';
 import { attachGeneratedMedia, claimJobTransition, queuePrompt, transitionJob } from '../src/lib/control-plane';
@@ -21,7 +22,7 @@ async function main() {
   assertSafeMockEnvironment();
   await prisma.$queryRaw`SELECT 1`;
 
-  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const stamp = `${Date.now()}-${randomBytes(6).toString('hex')}`;
   const externalPromptId = `SMOKE-${stamp}`;
   let promptId: string | null = null;
   let jobId: string | null = null;
