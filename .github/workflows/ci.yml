@@ -12,30 +12,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Query SonarQube Cloud issues
+      - name: Query SonarQube Cloud security impacts
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== PR 22 vulnerabilities ==='
-          curl -fsSLG 'https://sonarcloud.io/api/issues/search' \
-            --data-urlencode 'componentKeys=mkarson1997_karzoun-media-factory' \
-            --data-urlencode 'pullRequest=22' \
-            --data-urlencode 'types=VULNERABILITY' \
-            --data-urlencode 'ps=100' \
-            | jq '{total, issues: [.issues[] | {key, rule, severity, type, component, line, message, status, cleanCodeAttribute, impacts}]}'
 
-          echo '=== main vulnerabilities ==='
-          curl -fsSLG 'https://sonarcloud.io/api/issues/search' \
-            --data-urlencode 'componentKeys=mkarson1997_karzoun-media-factory' \
-            --data-urlencode 'branch=main' \
-            --data-urlencode 'types=VULNERABILITY' \
-            --data-urlencode 'statuses=OPEN,CONFIRMED' \
-            --data-urlencode 'ps=100' \
-            | jq '{total, issues: [.issues[] | {key, rule, severity, type, component, line, message, status, creationDate, cleanCodeAttribute, impacts}]}'
+          query_issues() {
+            local scope="$1"
+            shift
+            echo "=== ${scope} security-impact issues ==="
+            curl -fsSLG 'https://sonarcloud.io/api/issues/search' \
+              --data-urlencode 'componentKeys=mkarson1997_karzoun-media-factory' \
+              --data-urlencode 'ps=500' \
+              "$@" \
+              | jq '{total, securityIssues: [.issues[] | select(any(.impacts[]?; .softwareQuality == "SECURITY")) | {key, rule, severity, type, component, line, message, status, creationDate, cleanCodeAttribute, impacts}]}'
+          }
 
-          echo '=== PR 22 hotspots ==='
-          curl -fsSLG 'https://sonarcloud.io/api/hotspots/search' \
-            --data-urlencode 'projectKey=mkarson1997_karzoun-media-factory' \
-            --data-urlencode 'pullRequest=22' \
-            --data-urlencode 'ps=100' \
-            | jq '{paging, hotspots: [.hotspots[] | {key, component, line, message, status, vulnerabilityProbability, securityCategory}]}'
+          query_issues 'PR 22' --data-urlencode 'pullRequest=22'
+          query_issues 'main' --data-urlencode 'branch=main' --data-urlencode 'statuses=OPEN,CONFIRMED'
