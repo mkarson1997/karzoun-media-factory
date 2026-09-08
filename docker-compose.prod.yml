@@ -5,7 +5,7 @@ services:
       - .env
     ports:
       - "127.0.0.1:${KMF_PORT:-3100}:3000"
-    command: ["sh", "-c", "npx prisma db push && npm run seed && npm start"]
+    command: ["sh", "-c", "./node_modules/.bin/prisma db push && npm run seed && npm start"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
       interval: 15s
