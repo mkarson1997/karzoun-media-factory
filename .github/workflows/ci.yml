@@ -6,38 +6,19 @@ on:
 
 permissions:
   contents: read
+  checks: read
 
 jobs:
   inspect-sonar:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Query main Sonar security findings
+      - name: Read historical Sonar annotations
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -u
-          PROJECT='mkarson1997_karzoun-media-factory'
-
-          echo '=== Main issues with SECURITY impact ==='
-          curl -sSLG 'https://sonarcloud.io/api/issues/search' \
-            --data-urlencode "componentKeys=$PROJECT" \
-            --data-urlencode 'branch=main' \
-            --data-urlencode 'issueStatuses=OPEN,CONFIRMED' \
-            --data-urlencode 'ps=500' \
-            | jq '{total, securityIssues: [.issues[]? | select(any(.impacts[]?; .softwareQuality == "SECURITY")) | {key, rule, severity, type, component, line, message, status, creationDate, cleanCodeAttribute, impacts, textRange}]}'
-
-          echo '=== Main vulnerabilities ==='
-          curl -sSLG 'https://sonarcloud.io/api/issues/search' \
-            --data-urlencode "componentKeys=$PROJECT" \
-            --data-urlencode 'branch=main' \
-            --data-urlencode 'types=VULNERABILITY' \
-            --data-urlencode 'issueStatuses=OPEN,CONFIRMED' \
-            --data-urlencode 'ps=500' \
-            | jq '{total, issues: [.issues[]? | {key, rule, severity, type, component, line, message, status, creationDate, impacts, textRange}]}'
-
-          echo '=== Main security hotspots ==='
-          curl -sSLG 'https://sonarcloud.io/api/hotspots/search' \
-            --data-urlencode "projectKey=$PROJECT" \
-            --data-urlencode 'branch=main' \
-            --data-urlencode 'ps=500' \
-            | jq '{paging, hotspots: [.hotspots[]? | {key, component, line, message, status, vulnerabilityProbability, securityCategory}]}'
+          set -euo pipefail
+          echo '=== PR 18 Sonar annotations ==='
+          gh api 'repos/${{ github.repository }}/check-runs/101813886482/annotations?per_page=100' \
+            --jq '.[] | {path, start_line, end_line, annotation_level, title, message}'
