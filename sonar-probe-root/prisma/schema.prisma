@@ -1,0 +1,237 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ChannelType {
+  GENERAL
+  KIDS_CHANNEL_ONLY
+}
+
+enum Visibility {
+  PRIVATE
+  UNLISTED
+  PUBLIC
+}
+
+enum JobStatus {
+  DRAFT
+  QUEUED
+  GENERATING
+  READY_FOR_REVIEW
+  APPROVED
+  REJECTED
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  CANCELLED
+}
+
+enum JobOrigin {
+  MANUAL
+  AUTOPILOT
+}
+
+enum ReviewSource {
+  DASHBOARD
+  TELEGRAM
+}
+
+enum ReviewDecisionType {
+  APPROVED
+  REJECTED
+}
+
+model Operator {
+  id             String   @id @default(cuid())
+  displayName    String   @default("Operator")
+  telegramUserId String?  @unique
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model AppSettings {
+  id                          String   @id @default("singleton")
+  projectName                 String   @default("Karzoun Media Factory")
+  timezone                    String   @default("Europe/Istanbul")
+  defaultLanguage             String   @default("en")
+  dailyProductionLimit        Int      @default(3)
+  dailyPublishingLimit        Int      @default(3)
+  productionPaused            Boolean  @default(false)
+  publishingPaused            Boolean  @default(false)
+  autopilotEnabled            Boolean  @default(false)
+  autopilotGeneralDailyTarget Int      @default(2)
+  autopilotKidsEnabled        Boolean  @default(false)
+  autopilotKidsDailyTarget    Int      @default(0)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+}
+
+model IntegrationCredential {
+  id              String   @id @default(cuid())
+  provider        String   @unique
+  encryptedSecret String
+  iv              String
+  authTag         String
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Channel {
+  id                String          @id @default(cuid())
+  name              String
+  type              ChannelType
+  enabled           Boolean         @default(true)
+  externalChannelId String?
+  defaultVisibility Visibility      @default(PRIVATE)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  jobs              ProductionJob[]
+
+  @@index([type, enabled])
+}
+
+model Prompt {
+  id                    String          @id @default(cuid())
+  externalPromptId      String          @unique
+  category              String
+  concept               String
+  fullPrompt            String
+  targetDurationSeconds Int
+  channelType           ChannelType
+  active                Boolean         @default(true)
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  jobs                  ProductionJob[]
+
+  @@index([channelType, active])
+  @@index([category])
+}
+
+model ProductionJob {
+  id                 String              @id @default(cuid())
+  promptId           String
+  channelId          String
+  status             JobStatus           @default(DRAFT)
+  origin             JobOrigin           @default(MANUAL)
+  provider           String              @default("mock")
+  providerJobId      String?
+  creationId         String?
+  providerStatus     String?
+  providerMetadata   Json?
+  requestedDuration  Int
+  actualDuration     Int?
+  creativeBrief      Json?
+  creativeModel      String?
+  creativePreparedAt DateTime?
+  videoUrl           String?
+  thumbnailUrl       String?
+  title              String?
+  description        String?
+  hashtags           String[]            @default([])
+  failureReason      String?
+  retryCount         Int                 @default(0)
+  generationAttempt  Int                 @default(0)
+  startedAt          DateTime?
+  lastPolledAt       DateTime?
+  nextPollAt         DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  prompt             Prompt              @relation(fields: [promptId], references: [id], onDelete: Restrict)
+  channel            Channel             @relation(fields: [channelId], references: [id], onDelete: Restrict)
+  reviews            ReviewDecision[]
+  schedule           PublishSchedule?
+  publishRecord      PublishRecord?
+  analytics          AnalyticsSnapshot[]
+
+  @@index([status, updatedAt])
+  @@index([status, nextPollAt])
+  @@index([provider, creationId])
+  @@index([channelId, status])
+  @@index([origin, createdAt])
+}
+
+model ReviewDecision {
+  id        String             @id @default(cuid())
+  jobId     String
+  decision  ReviewDecisionType
+  notes     String?
+  source    ReviewSource
+  createdAt DateTime           @default(now())
+  job       ProductionJob      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+}
+
+model PublishSchedule {
+  id         String        @id @default(cuid())
+  jobId      String        @unique
+  publishAt  DateTime
+  timezone   String
+  visibility Visibility    @default(PRIVATE)
+  status     String        @default("PENDING")
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  job        ProductionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([publishAt, status])
+}
+
+model PublishRecord {
+  id             String        @id @default(cuid())
+  jobId          String        @unique
+  youtubeVideoId String?
+  publishedAt    DateTime?
+  visibility     Visibility    @default(PRIVATE)
+  status         String
+  error          String?
+  job            ProductionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model AnalyticsSnapshot {
+  id                       String        @id @default(cuid())
+  jobId                    String
+  source                   String        @default("YOUTUBE_ANALYTICS")
+  views                    Int           @default(0)
+  engagedViews             Int           @default(0)
+  likes                    Int           @default(0)
+  comments                 Int           @default(0)
+  shares                   Int           @default(0)
+  subscribersGained        Int           @default(0)
+  subscribersLost          Int           @default(0)
+  averageViewDuration      Float?
+  averagePercentageViewed  Float?
+  engagedViewRate          Float?
+  interactionRate          Float?
+  subscriberConversionRate Float?
+  viewedVsSwipedAway       Float?
+  first24hPerformance      Float?
+  first48hPerformance      Float?
+  performanceScore         Float?
+  capturedAt               DateTime      @default(now())
+  job                      ProductionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, capturedAt])
+  @@index([capturedAt])
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  actor      String
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+}
