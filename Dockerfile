@@ -6,7 +6,7 @@ RUN apk add --no-cache ffmpeg font-dejavu
 
 COPY package.json package-lock.json .npmrc ./
 COPY prisma ./prisma
-RUN npm ci --include=dev
+RUN npm ci --include=dev --ignore-scripts
 
 COPY app ./app
 COPY public ./public
