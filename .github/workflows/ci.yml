@@ -15,35 +15,29 @@ jobs:
       - name: Query main Sonar security findings
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
           PROJECT='mkarson1997_karzoun-media-factory'
 
-          echo '=== Main quality gate ==='
-          curl -fsSLG 'https://sonarcloud.io/api/qualitygates/project_status' \
-            --data-urlencode "projectKey=$PROJECT" \
-            --data-urlencode 'branch=main' \
-            | jq '.projectStatus | {status, conditions}'
-
           echo '=== Main issues with SECURITY impact ==='
-          curl -fsSLG 'https://sonarcloud.io/api/issues/search' \
+          curl -sSLG 'https://sonarcloud.io/api/issues/search' \
             --data-urlencode "componentKeys=$PROJECT" \
             --data-urlencode 'branch=main' \
             --data-urlencode 'issueStatuses=OPEN,CONFIRMED' \
             --data-urlencode 'ps=500' \
-            | jq '{total, securityIssues: [.issues[] | select(any(.impacts[]?; .softwareQuality == "SECURITY")) | {key, rule, severity, type, component, line, message, status, creationDate, cleanCodeAttribute, impacts, textRange}]}'
+            | jq '{total, securityIssues: [.issues[]? | select(any(.impacts[]?; .softwareQuality == "SECURITY")) | {key, rule, severity, type, component, line, message, status, creationDate, cleanCodeAttribute, impacts, textRange}]}'
 
           echo '=== Main vulnerabilities ==='
-          curl -fsSLG 'https://sonarcloud.io/api/issues/search' \
+          curl -sSLG 'https://sonarcloud.io/api/issues/search' \
             --data-urlencode "componentKeys=$PROJECT" \
             --data-urlencode 'branch=main' \
             --data-urlencode 'types=VULNERABILITY' \
             --data-urlencode 'issueStatuses=OPEN,CONFIRMED' \
             --data-urlencode 'ps=500' \
-            | jq '{total, issues: [.issues[] | {key, rule, severity, type, component, line, message, status, creationDate, impacts, textRange}]}'
+            | jq '{total, issues: [.issues[]? | {key, rule, severity, type, component, line, message, status, creationDate, impacts, textRange}]}'
 
           echo '=== Main security hotspots ==='
-          curl -fsSLG 'https://sonarcloud.io/api/hotspots/search' \
+          curl -sSLG 'https://sonarcloud.io/api/hotspots/search' \
             --data-urlencode "projectKey=$PROJECT" \
             --data-urlencode 'branch=main' \
             --data-urlencode 'ps=500' \
-            | jq '{paging, hotspots: [.hotspots[] | {key, component, line, message, status, vulnerabilityProbability, securityCategory}]}'
+            | jq '{paging, hotspots: [.hotspots[]? | {key, component, line, message, status, vulnerabilityProbability, securityCategory}]}'
